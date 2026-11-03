@@ -104,6 +104,12 @@ $script:ScreenTranslated = $false
 $script:ScreenTranslation = ""
 $script:OtherKeys = @()
 $script:MultiQuestion = $false
+$script:Wizard = $false
+$script:WizardQuestions = @()
+$script:WizardIndex = 0
+$script:WizardAnswers = @()
+$script:WizardOther = $false
+$script:WizardStarted = $false
 $script:LastActivity = Get-Date
 
 function Resolve-Language([string]$requestLang) {
@@ -913,9 +919,17 @@ $ignoreButton = New-Object HerdrApproval.TextButton
 $ignoreButton.LabelFont = $fSmall
 $ignoreButton.TextColor = $ColDim
 $ignoreButton.HoverColor = $ColRaised
+$wizardPrev = New-Object HerdrApproval.TextButton
+$wizardPrev.LabelFont = $fSmallStrong
+$wizardPrev.TextColor = $ColMuted
+$wizardPrev.HoverColor = $ColRaised
+$wizardNext = New-Object HerdrApproval.TextButton
+$wizardNext.LabelFont = $fSmallStrong
+$wizardNext.TextColor = $ColAccent
+$wizardNext.HoverColor = Paint-Blend $ColAccent $ColSurface 0.12
 
 foreach ($control in @($appChip, $needChip, $queueChip, $closeButton, $titleLabel, $spaceChip, $tabChip, $termChip, $waitLabel,
-    $qHeadLabel, $questionCard, $translateButton, $translationCard, $termCard, $optionsLabel, $optionsPanel, $keyPanel, $inputCard, $inputLine, $termRule, $inputRule, $footerLine, $shortcutLabel, $openButton, $ignoreButton)) {
+    $qHeadLabel, $questionCard, $translateButton, $translationCard, $termCard, $optionsLabel, $optionsPanel, $keyPanel, $inputCard, $inputLine, $termRule, $inputRule, $footerLine, $shortcutLabel, $openButton, $ignoreButton, $wizardPrev, $wizardNext)) {
   $card.Controls.Add($control)
 }
 
@@ -966,6 +980,189 @@ function Add-Row($option, [int]$index) {
   $row.add_Click({ param($sender, $event) Invoke-Option $sender }.GetNewClosure())
   [void]$optionsPanel.Controls.Add($row)
   if ($row.IsDefault -and $null -eq $script:DefaultRow) { $script:DefaultRow = $row }
+}
+
+function Add-WizardRow($option, [int]$index) {
+  $row = New-Object HerdrApproval.RowButton
+  $label = [string]$option.label
+  $row.Badge = [string]($index + 1)
+  $row.LabelText = $label
+  $row.IsDefault = $false
+  $row.Hint = ""
+  $row.FillColor = $ColRaised
+  $row.BadgeColor = $ColPopover
+  $row.BorderColor = $ColBorder
+  $row.AccentColor = $ColAccent
+  $row.AccentText = $ColAccentFg
+  $row.TextColor = $ColFg
+  $row.MutedColor = $ColMuted
+  $row.HoverColor = Paint-Blend $ColAccent $ColSurface 0.10
+  $row.LabelFont = $fBodyStrong
+  $row.SecondaryFont = $fSmall
+  $row.HintFont = $fSmall
+  $row.BadgeFont = $fSmallStrong
+  $row.Tag = @{ wizard = $true; index = $index; other = [bool]$option.other; label = $label; original = $label }
+  $row.Height = S 44
+  $row.add_Click({ param($sender, $event) Wizard-Select $sender }.GetNewClosure())
+  [void]$optionsPanel.Controls.Add($row)
+}
+
+function Update-WizardRows {
+  if (-not $script:Wizard) { return }
+  $answer = $script:WizardAnswers[$script:WizardIndex]
+  $selected = @($answer.selected)
+  foreach ($row in @($optionsPanel.Controls)) {
+    if ($row -isnot [HerdrApproval.RowButton] -or $null -eq $row.Tag) { continue }
+    $on = $selected -contains [int]$row.Tag.index
+    $row.IsDefault = $on
+    $row.Hint = if ($on) { "✓" } else { "" }
+    $row.Invalidate()
+  }
+}
+
+function Show-Wizard {
+  if (-not $script:Wizard) { return }
+  $q = $script:WizardQuestions[$script:WizardIndex]
+  $answer = $script:WizardAnswers[$script:WizardIndex]
+  $questionLabel.Text = [string]$q.question
+  Clear-Options
+  $i = 0
+  foreach ($option in @($q.options)) {
+    Add-WizardRow $option $i
+    $i++
+  }
+  Update-WizardRows
+  $otherIndex = -1
+  for ($j = 0; $j -lt @($q.options).Count; $j++) { if ($q.options[$j].other) { $otherIndex = $j } }
+  $script:WizardOther = (@($answer.selected) -contains $otherIndex)
+  if ($script:WizardOther) { Set-CueBanner (T "popup.placeholderOther") } else { Set-CueBanner }
+  Update-Texts
+  Layout-Form
+}
+
+function Wizard-Select($control) {
+  if (-not $script:Wizard -or $null -eq $control.Tag) { return }
+  $q = $script:WizardQuestions[$script:WizardIndex]
+  $answer = $script:WizardAnswers[$script:WizardIndex]
+  $index = [int]$control.Tag.index
+  if ($control.Tag.other) {
+    $answer.selected = @($index)
+    $answer.text = ""
+    $script:WizardOther = $true
+    Set-CueBanner (T "popup.placeholderOther")
+    $form.Activate()
+    $inputBox.Focus()
+  } elseif ($q.multi) {
+    $selected = @($answer.selected)
+    if ($selected -contains $index) {
+      $answer.selected = @($selected | Where-Object { $_ -ne $index })
+    } else {
+      $answer.selected = @($selected + $index)
+    }
+    $script:WizardOther = $false
+  } else {
+    $answer.selected = @($index)
+    $script:WizardOther = $false
+  }
+  Update-WizardRows
+  Layout-Form
+}
+
+function Wizard-Prev {
+  if (-not $script:Wizard -or $script:WizardIndex -le 0) { return }
+  $script:WizardIndex--
+  Show-Wizard
+}
+
+function Send-WizardCurrent {
+  $q = $script:WizardQuestions[$script:WizardIndex]
+  $answer = $script:WizardAnswers[$script:WizardIndex]
+  $selected = @($answer.selected | Sort-Object)
+  if ($selected.Count -eq 0) { return }
+  $address = [string]$script:Active.address
+  $keys = @()
+  $script:WizardStarted = $true
+  $otherIndex = -1
+  for ($i = 0; $i -lt @($q.options).Count; $i++) { if ($q.options[$i].other) { $otherIndex = $i } }
+  if ($q.multi) {
+    $pos = 0
+    foreach ($index in $selected) {
+      if ($index -eq $otherIndex) { continue }
+      $delta = $index - $pos
+      if ($delta -gt 0) { $keys += @("down") * $delta }
+      elseif ($delta -lt 0) { $keys += @("up") * (-$delta) }
+      $keys += "space"
+      $pos = $index
+    }
+    if ($selected -contains $otherIndex) {
+      $delta = $otherIndex - $pos
+      if ($delta -gt 0) { $keys += @("down") * $delta } elseif ($delta -lt 0) { $keys += @("up") * (-$delta) }
+      $keys += "enter"
+      $result = Invoke-Hc (@("keys", $address) + $keys)
+      if (-not $result.ok) { throw [Exception]::new([string]$result.error) }
+      Start-Sleep -Milliseconds 250
+      $textResult = Invoke-Hc @("send", "--force", $address, [string]$answer.text)
+      if (-not $textResult.ok) { throw [Exception]::new([string]$textResult.error) }
+      Start-Sleep -Milliseconds 250
+      return
+    }
+    $keys += "enter"
+  } else {
+    $keys += @("down") * [int]$selected[0]
+    $keys += "enter"
+    if ($selected[0] -eq $otherIndex) {
+      $result = Invoke-Hc (@("keys", $address) + $keys)
+      if (-not $result.ok) { throw [Exception]::new([string]$result.error) }
+      Start-Sleep -Milliseconds 250
+      $textResult = Invoke-Hc @("send", "--force", $address, [string]$answer.text)
+      if (-not $textResult.ok) { throw [Exception]::new([string]$textResult.error) }
+      Start-Sleep -Milliseconds 250
+      return
+    }
+  }
+  $result = Invoke-Hc (@("keys", $address) + $keys)
+  if (-not $result.ok) { throw [Exception]::new([string]$result.error) }
+  Start-Sleep -Milliseconds 200
+}
+
+function Finish-Wizard {
+  $request = $script:Active
+  if ($null -eq $request) { return }
+  Write-Answer @{ id = $request.id; address = $request.address; action = "keys"; choice = "multi-question"; ok = $true; stillBlocked = $false; at = (Get-Date).ToUniversalTime().ToString("o") }
+  Remove-Item -LiteralPath (Join-Path $QueueDir ("{0}.json" -f $request.id)) -Force -ErrorAction SilentlyContinue
+  Write-Log ("wizard {0} {1}" -f $request.id, $request.address)
+  Hide-Active
+}
+
+function Wizard-Next {
+  if (-not $script:Wizard -or $script:Busy) { return }
+  $q = $script:WizardQuestions[$script:WizardIndex]
+  $answer = $script:WizardAnswers[$script:WizardIndex]
+  $selected = @($answer.selected)
+  if ($selected.Count -eq 0) { return }
+  $otherIndex = -1
+  for ($i = 0; $i -lt @($q.options).Count; $i++) { if ($q.options[$i].other) { $otherIndex = $i } }
+  if ($selected -contains $otherIndex -and -not ([string]$answer.text).Trim()) {
+    Set-CueBanner (T "popup.placeholderOther")
+    $inputBox.Focus()
+    return
+  }
+  $script:Busy = $true
+  try {
+    Send-WizardCurrent
+    if ($script:WizardIndex + 1 -lt $script:WizardQuestions.Count) {
+      $script:WizardIndex++
+      Show-Wizard
+    } else {
+      $submit = Invoke-Hc @("keys", [string]$script:Active.address, "enter")
+      Finish-Wizard
+    }
+  } catch {
+    Write-Log ("wizard error {0}" -f $_.Exception.Message)
+    try { $tray.ShowBalloonTip(5000, (T "popup.failed"), $_.Exception.Message, [System.Windows.Forms.ToolTipIcon]::Error) } catch {}
+  } finally {
+    $script:Busy = $false
+  }
 }
 
 function Add-KeyCap([string]$label, $keys) {
@@ -1024,18 +1221,28 @@ function Update-Texts {
   $termTranslate.Width = $termTranslate.PreferredWidth()
   $termToggle.Text = if ($script:ScreenExpanded) { T "popup.collapse" } else { T "popup.expand" }
   $termRefresh.Text = T "popup.refresh"
-  if ($script:MultiQuestion) {
+  if ($script:Wizard) {
+    $optionsLabel.Text = (T "popup.wizardQuestion").Replace("{i}", [string]($script:WizardIndex + 1)).Replace("{n}", [string]$script:WizardQuestions.Count)
+  } elseif ($script:MultiQuestion) {
     $optionsLabel.Text = (T "popup.multiQuestion").Replace("{n}", [string]$script:Active.questionCount)
   } else {
     $optionsLabel.Text = if (@($script:Active.options).Count -gt 0) { T "popup.choose" } elseif ($script:Active.kind -eq "text") { T "popup.answer" } else { T "popup.generic" }
   }
+  $wizardPrev.Visible = $script:Wizard
+  $wizardNext.Visible = $script:Wizard
+  $wizardPrev.Text = T "popup.wizardPrev"
+  $wizardNext.Text = if ($script:Wizard -and $script:WizardIndex + 1 -ge $script:WizardQuestions.Count) { T "popup.wizardSubmit" } else { T "popup.wizardNext" }
+  $wizardPrev.Width = $wizardPrev.PreferredWidth()
+  $wizardNext.Width = $wizardNext.PreferredWidth()
   $sendButton.Text = T "popup.send"
   $sendButton.Width = $sendButton.PreferredWidth()
   $openButton.Text = T "popup.open"
   $openButton.Width = $openButton.PreferredWidth()
   $ignoreButton.Text = T "popup.ignore"
   $ignoreButton.Width = $ignoreButton.PreferredWidth()
-  if ($script:MultiQuestion) {
+  if ($script:Wizard) {
+    $shortcutLabel.Text = T "popup.hintWizard"
+  } elseif ($script:MultiQuestion) {
     $shortcutLabel.Text = T "popup.hintMulti"
   } elseif (@($script:Active.options).Count -gt 0) {
     $shortcutLabel.Text = (T "popup.hintDefaults") + "  ·  " + (T "popup.hintTranslate")
@@ -1136,7 +1343,7 @@ function Layout-Form {
   $headerBottom = $metaY + (S 26)
 
   $qHeadY = $headerBottom + (S 10)
-  $qText = [string]$script:Active.question
+  $qText = if ($script:Wizard) { [string]$script:WizardQuestions[$script:WizardIndex].question } else { [string]$script:Active.question }
   $hasQuestion = $qText.Trim().Length -gt 0
   $hasOptions = @($script:Active.options).Count -gt 0
   $qHeadLabel.Visible = $hasQuestion -or $hasOptions
@@ -1212,8 +1419,8 @@ function Layout-Form {
   $oY = $tY + $tH + (S 12)
   $optionsLabel.Location = New-Object System.Drawing.Point($x, $oY)
   $rowY = $oY + (S 24)
-  $optionCount = @($script:Active.options).Count
-  if ($script:MultiQuestion) {
+  $optionCount = if ($script:Wizard) { @($script:WizardQuestions[$script:WizardIndex].options).Count } else { @($script:Active.options).Count }
+  if ($script:MultiQuestion -and -not $script:Wizard) {
     $optionsLabel.Visible = $true
     $optionsLabel.AutoSize = $false
     $optionsLabel.Size = New-Object System.Drawing.Size($inner, (S 44))
@@ -1274,13 +1481,19 @@ function Layout-Form {
   $inputLine.Location = New-Object System.Drawing.Point($x, ($iY + (S 45)))
   $inputLine.Size = New-Object System.Drawing.Size($inner, 1)
 
-  $fY = if ($script:MultiQuestion) { $iY + (S 12) } else { $iY + (S 52) }
+  $fY = if ($script:MultiQuestion -and -not $script:Wizard) { $iY + (S 12) } else { $iY + (S 52) }
   $footerLine.Location = New-Object System.Drawing.Point(0, $fY)
   $footerLine.Size = New-Object System.Drawing.Size($w, 1)
   $shortcutLabel.Location = New-Object System.Drawing.Point($x, ($fY + (S 12)))
-  $shortcutLabel.Size = New-Object System.Drawing.Size(($inner - $openButton.Width - $ignoreButton.Width - (S 24)), (S 24))
+  $shortcutWidth = $inner - $openButton.Width - $ignoreButton.Width - (S 24)
+  if ($script:Wizard) { $shortcutWidth -= $wizardPrev.Width + $wizardNext.Width + (S 24) }
+  $shortcutLabel.Size = New-Object System.Drawing.Size([Math]::Max((S 120), $shortcutWidth), (S 24))
   $ignoreButton.Location = New-Object System.Drawing.Point(($x + $inner - $ignoreButton.Width), ($fY + (S 10)))
   $openButton.Location = New-Object System.Drawing.Point(($x + $inner - $ignoreButton.Width - $openButton.Width - (S 6)), ($fY + (S 10)))
+  $wizardPrev.Width = $wizardPrev.PreferredWidth()
+  $wizardNext.Width = $wizardNext.PreferredWidth()
+  $wizardNext.Location = New-Object System.Drawing.Point(($x + $inner - $ignoreButton.Width - $openButton.Width - $wizardNext.Width - (S 14)), ($fY + (S 10)))
+  $wizardPrev.Location = New-Object System.Drawing.Point(($wizardNext.Location.X - $wizardPrev.Width - (S 8)), ($fY + (S 10)))
 
   $desired = $fY + (S 44)
   $area = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
@@ -1431,6 +1644,20 @@ function Send-FreeText {
   if ($script:Busy -or $null -eq $script:Active) { return }
   $value = $inputBox.Text
   if (-not $value.Trim()) { return }
+  if ($script:Wizard) {
+    $q = $script:WizardQuestions[$script:WizardIndex]
+    $answer = $script:WizardAnswers[$script:WizardIndex]
+    $otherIndex = -1
+    for ($i = 0; $i -lt @($q.options).Count; $i++) { if ($q.options[$i].other) { $otherIndex = $i } }
+    if ($otherIndex -ge 0) {
+      if (-not (@($answer.selected) -contains $otherIndex)) { $answer.selected = @($answer.selected + $otherIndex) }
+      $answer.text = $value
+      $script:WizardOther = $true
+      Update-WizardRows
+      Layout-Form
+    }
+    return
+  }
   $otherKeys = @($script:OtherKeys)
   if ($otherKeys.Count -gt 0) {
     $address = [string]$script:Active.address
@@ -1587,6 +1814,8 @@ function Translate-Current {
 }
 
 $translateButton.add_Click({ Translate-Current })
+$wizardPrev.add_Click({ Wizard-Prev })
+$wizardNext.add_Click({ Wizard-Next })
 $termToggle.add_Click({ Toggle-Screen })
 $termTranslate.add_Click({ Translate-Screen })
 $termRefresh.add_Click({ Refresh-Screen })
@@ -1744,6 +1973,9 @@ function Show-Request($request) {
   if ($null -eq $request) { return }
   $script:Active = $request
   $script:MultiQuestion = [bool]$request.multiQuestion
+  $script:Wizard = $false
+  $script:WizardQuestions = @($request.questions)
+  if ($script:MultiQuestion -and $script:WizardQuestions.Count -ge 2) { $script:Wizard = $true }
   $script:Lang = Resolve-Language ([string]$request.lang)
   $script:OpenKey = Get-OpenKey
   if ($request.options) { $script:DefaultRow = $null }
@@ -1758,6 +1990,14 @@ function Show-Request($request) {
   $script:ScreenFull = [string]$request.screen
   $script:ScreenExpanded = $false
   $script:OtherKeys = @()
+  if ($script:Wizard) {
+    $script:WizardIndex = 0
+    $script:WizardAnswers = @()
+    foreach ($question in $script:WizardQuestions) {
+      $script:WizardAnswers += [pscustomobject]@{ selected = @(); text = "" }
+    }
+    $script:WizardStarted = $false
+  }
   $script:ScreenTranslated = $false
   $script:ScreenTranslation = ""
   $termTitle.Text = T "popup.screen"
@@ -1773,18 +2013,22 @@ function Show-Request($request) {
   $screenBox.Text = Trim-Screen $script:ScreenFull $false
   $inputBox.Text = ""
   Clear-Options
-  $options = @($request.options)
-  if ($options.Count -gt 0) {
-    $index = 0
-    foreach ($option in $options) {
-      if ($null -eq $option) { continue }
-      if (-not (Test-Keys $option.keys)) { continue }
-      Add-Row $option $index
-      $index++
+  if ($script:Wizard) {
+    Show-Wizard
+  } else {
+    $options = @($request.options)
+    if ($options.Count -gt 0) {
+      $index = 0
+      foreach ($option in $options) {
+        if ($null -eq $option) { continue }
+        if (-not (Test-Keys $option.keys)) { continue }
+        Add-Row $option $index
+        $index++
+      }
+      if ($index -eq 0 -and $request.kind -ne "text") { Add-GenericKeys }
+    } elseif ($request.kind -ne "text") {
+      Add-GenericKeys
     }
-    if ($index -eq 0 -and $request.kind -ne "text") { Add-GenericKeys }
-  } elseif ($request.kind -ne "text") {
-    Add-GenericKeys
   }
   Update-OptionLabels
   Update-Texts
@@ -1796,7 +2040,9 @@ function Show-Request($request) {
   $form.BringToFront()
   $form.TopMost = $true
   Write-Log ("form visible={0} state={1} bounds={2} handle={3}" -f $form.Visible, $form.WindowState, $form.Bounds, $form.Handle)
-  if ($request.kind -eq "text" -and -not $script:MultiQuestion) {
+  if ($script:Wizard) {
+    $form.ActiveControl = $null
+  } elseif ($request.kind -eq "text" -and -not $script:MultiQuestion) {
     $form.ActiveControl = $inputBox
     $inputBox.Focus()
   } else {

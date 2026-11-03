@@ -356,7 +356,9 @@ export default class ApprovalRelay extends View {
   async reconcile(now) {
     const live = new Set(now.map((agent) => agent.address));
     for (const [address, request] of [...this.pending]) {
-      if (live.has(address) && now.find((a) => a.address === address)?.status === "blocked") continue;
+      const agent = now.find((a) => a.address === address);
+      if (request.multiQuestion && live.has(address)) continue;
+      if (live.has(address) && agent?.status === "blocked") continue;
       await this.cancelRequest(address, "external");
     }
   }
@@ -369,6 +371,7 @@ export default class ApprovalRelay extends View {
     const attempts = this.attempts.get(address) ?? 0;
     if (attempts >= this.config.maxAttempts) return;
     if (this.config.skipFocused && agent.focused && window()?.active) return;
+    if (pending?.multiQuestion) { pending.checkedAt = Date.now(); return; }
     const due = (this.lastRead.get(address) ?? 0) + this.config.readCooldownMs;
     const checked = pending?.checkedAt ?? pending?.updatedAt ?? 0;
     if (pending && Date.now() - checked < this.config.readCooldownMs) return;
@@ -437,6 +440,7 @@ export default class ApprovalRelay extends View {
       question: parsed.question ?? "",
       questionCount: parsed.questionCount ?? 1,
       multiQuestion: Boolean(parsed.multiQuestion),
+      questions: parsed.questions ?? [],
       kind: parsed.kind ?? (parsed.generic ? "text" : "options"),
       generic: Boolean(parsed.generic),
       options: parsed.options ?? [],

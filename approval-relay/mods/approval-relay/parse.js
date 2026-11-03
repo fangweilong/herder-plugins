@@ -243,6 +243,53 @@ function choiceRun(lines) {
   return { start, end: last, rows };
 }
 
+function sectionOption(text) {
+  let value = text.trim();
+  if (/^[❯›▶►]\s+/.test(value)) value = value.replace(/^[❯›▶►]\s+/, "").trim();
+  let matched = value.match(RADIO);
+  let multi = false;
+  if (!matched) { matched = value.match(CHECKBOX); multi = Boolean(matched); }
+  if (!matched) return null;
+  const label = value.slice(matched[0].length).trim();
+  if (!label) return null;
+  return {
+    label,
+    multi,
+    marker: /^[❯›▶►]\s+/.test(text.trim()),
+    other: /^(other|其他|自己输入|自定义|type something|specify|custom|输入)/i.test(label),
+  };
+}
+
+function sectionQuestions(lines) {
+  const questions = [];
+  for (let i = 0; i < lines.length; i++) {
+    const text = stripBox(lines[i]).replace(/^[─━┄┅┈┉╌╍═╭╮╰╯├┤┬┴┼]+\s*/, "");
+    const header = text.match(/^\[([^\]]+)\]\s*·\s*(multi\s*·\s*)?options:(\d+)/i);
+    if (!header) continue;
+    const options = [];
+    const prompt = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const text = stripBox(lines[j]);
+      if (!text) continue;
+      if (/^[─━┄┅┈┉╌╍═╭╮╰╯]*\s*\[[^\]]+\]\s*·\s*(?:multi\s*·\s*)?options:/i.test(text)) break;
+      if (/^[╰└]/.test(lines[j])) break;
+      const option = sectionOption(text);
+      if (option) options.push(option);
+      else if (!options.length && !isBorder(lines[j])) prompt.push(text);
+    }
+    if (options.length) {
+      if (!options.some((o) => o.other)) options.push({ label: "Other (type your own)", other: true });
+      questions.push({
+        id: header[1],
+        question: prompt.join("\n").slice(-800),
+        options,
+        multi: Boolean(header[2]),
+      });
+    }
+  }
+  return questions;
+}
+
 function questionInBox(lines, start, boxStart) {
   const picked = [];
   for (let i = start - 1; i > boxStart && picked.length < 3; i--) {
@@ -313,6 +360,7 @@ export function parseApproval(raw, options = {}) {
   const askCount = Number((text.match(/\bAsk\s+(\d+)\s+questions\b/i) ?? [])[1] ?? 1);
   const sectionCount = (text.match(/\[[^\]\n]+\]\s*·\s*(?:multi\s*·\s*)?options:\d+/gi) ?? []).length;
   const questionCount = Math.max(askCount || 1, sectionCount, 1);
+  const questions = sectionQuestions(lines);
 
   // 取最靠近底部的一段选项；中间夹着描述行也算同一段（只保留连续编号的项）。
   const quietRuns = runs.filter((r) => {
@@ -343,12 +391,13 @@ export function parseApproval(raw, options = {}) {
       })),
       questionCount,
       multiQuestion: questionCount > 1,
+      questions,
     };
   }
 
   const yn = yesNo(lines);
   if (yn && tailIsQuiet(lines, yn.line)) {
-    return { kind: "options", generic: false, question: yn.question, options: yn.options, defaultOption: yn.defaultOption, questionCount, multiQuestion: questionCount > 1 };
+    return { kind: "options", generic: false, question: yn.question, options: yn.options, defaultOption: yn.defaultOption, questionCount, multiQuestion: questionCount > 1, questions };
   }
 
   // 无编号 / 高亮选择列表：omp、opencode、Pi 的二级菜单。
@@ -359,7 +408,7 @@ export function parseApproval(raw, options = {}) {
     const hasMarker = choices.rows.some((row) => row.marker);
     const hasKnown = choices.rows.some((row) => row.answer && CHOICE.test(row.label));
     if (opts && (before.marker || hasMarker || hasKnown)) {
-      return { kind: "options", generic: false, question: before.text, options: opts, questionCount, multiQuestion: questionCount > 1 };
+      return { kind: "options", generic: false, question: before.text, options: opts, questionCount, multiQuestion: questionCount > 1, questions };
     }
   }
 
@@ -373,7 +422,7 @@ export function parseApproval(raw, options = {}) {
     if (HINT.test(text) || INPUT.test(text)) canAnswer = true;
   }
   if (askIndex >= 0 && canAnswer) {
-    return { kind: "text", generic: true, question: questionNear(lines, askIndex), options: [], questionCount, multiQuestion: questionCount > 1 };
+    return { kind: "text", generic: true, question: questionNear(lines, askIndex), options: [], questionCount, multiQuestion: questionCount > 1, questions };
   }
 
   return null;

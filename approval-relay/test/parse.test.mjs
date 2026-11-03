@@ -153,6 +153,28 @@ OpenCode Go  mo 54%`);
   assert.equal(p.questionCount, 3);
 });
 
+
+test("omp multi-question screen exposes every question for the wizard", () => {
+  const p = parseApproval(`│ ├─── [auth] · options:2 ───
+│   Auth method?
+│   ○ Token
+│   ○ OAuth
+│ ├─── [trigger] · multi · options:2 ───
+│   Which triggers?
+│   ☐ 401
+│   ☐ Preflight
+│ ├─── [scope] · options:2 ───
+│   Which scope?
+│   ○ API
+│   ○ Downloads
+╰─────────────────────────────╯`);
+  assert.ok(p);
+  assert.equal(p.multiQuestion, true);
+  assert.equal(p.questions.length, 3);
+  assert.deepEqual(p.questions.map((q) => q.id), ["auth", "trigger", "scope"]);
+  assert.equal(p.questions[1].multi, true);
+});
+
 test("numbered options are tagged as options", () => {
   const p = parseApproval(fake);
   assert.equal(p.kind, "options");
