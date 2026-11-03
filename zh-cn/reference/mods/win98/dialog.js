@@ -1,0 +1,954 @@
+// Win98 dialogs, one overlay each: props { kind, ... }.
+//   prompt    a name: { title, text, icon, value, command: { name, args }, machines }
+//   confirm   { title, text, icon, buttons: [{ label, default, act }] }
+//   message   { title, text, icon }
+//   run       Run...: a command line in a new tab
+//   shutdown  Shut Down Herdr: stand by, shut down, restart, MS-DOS mode
+//   logoff    back to the main layout
+//   about     About Herdr 98
+//   taskman   Close Program: every terminal, End Task kills it
+//   display   Display Properties: scale, desktop color, sounds, assistant
+//   datetime  Date/Time Properties
+//   mycomputer, network, bin: Explorer-ish windows
+//   screen    the full-window shutdown / restart screens
+
+import { div, svg, image } from "gpui-kit";
+import { h_flex, v_flex } from "gpui-base";
+import {
+  props, closeOverlay, run, shared, setShared, terminals, spaces, agents, updates, hc, layout, openOverlay, home, settings,
+} from "herdr";
+import {
+  C, ASSETS, FONT, DOS, unit, root, win, bevel, button, field, well, label, plain, icon, programIcon, sfx, perform, etch,
+  scale, gradient, openDialog, dosPath, setApp,
+} from "./kit.js";
+import { userName } from "./taskbar.js";
+
+const KIND_TITLE = {
+  run: "运行",
+  shutdown: "关闭 Herdr",
+  logoff: "注销 Herdr",
+  about: "关于 Herdr 98",
+  taskman: "关闭程序",
+  display: "显示属性",
+  datetime: "日期/时间 属性",
+  welcome: "欢迎使用 Herdr 98",
+  mycomputer: "我的电脑",
+  network: "网上邻居",
+  bin: "回收站",
+};
+
+function lines(text) {
+  return String(text ?? "")
+    .split("\n")
+    .map((l) => div().child(l || " "));
+}
+
+export default class Dialog {
+  init(p, cx) {
+    this.p = p;
+    this.kind = p.kind;
+    this.focus = cx.focus_handle();
+    this.focus.focus();
+    this.text = p.value ?? "";
+    this.fresh = true;
+    this.choice = 0;
+    this.sel = 0;
+    this.page = 0;
+    this.machines = [];
+    this.machine = null;
+    if (this.kind === "run" && p.value === undefined) {
+      const hist = shared("win98.run") ?? [];
+      this.text = hist[0] ?? "";
+    }
+    if (this.kind === "confirm" || this.kind === "message") sfx(p.icon === "error" ? "chord" : p.icon === "question" ? "ding" : "ding");
+    if (this.kind === "shutdown" || this.kind === "logoff") sfx("ding");
+    if ((this.kind === "prompt" && p.machines) || this.kind === "network")
+      cx.spawn(async (cx) => {
+        try {
+          const r = await hc(["machine", "ls", "--json"]);
+          this.machines = r.code === 0 ? (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary) : [];
+        } catch {}
+        cx.notify();
+      });
+    if (this.kind === "screen") this.screen(cx);
+    if (this.kind === "datetime") cx.timer.every(1000, (cx) => cx.notify());
+  }
+
+  close() {
+    closeOverlay(props().overlay);
+  }
+
+  // ---- the shutdown and restart screens
+
+  screen(cx) {
+    const mode = this.p.mode;
+    this.stage = 0;
+    if (mode === "boot") {
+      this.stage = 1;
+      sfx("startup");
+      cx.timer.after(3400, () => {
+        this.close();
+        if (shared("win98.welcome") !== "off") openDialog("welcome", {});
+      });
+    } else if (mode === "shutdown") {
+      sfx("shutdown");
+      cx.timer.after(2600, (cx) => {
+        this.stage = 1;
+        cx.notify();
+        cx.timer.after(1600, () => {
+          this.close();
+          run("window.close", {});
+        });
+      });
+    } else {
+      cx.timer.after(1200, (cx) => {
+        this.stage = 1;
+        sfx("startup");
+        cx.notify();
+        cx.timer.after(3200, () => this.close());
+      });
+    }
+  }
+
+  renderScreen(u) {
+    if (this.p.mode === "shutdown" && this.stage === 1)
+      return div()
+        .size_full()
+        .bg("#000000")
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+          v_flex()
+            .items_center()
+            .font_family(DOS)
+            .text_size(u(32))
+            .line_height(`${u(40)}px`)
+            .text_color("#ff9c00")
+            .child("现在可以安全关闭"),
+            .child("你的电脑。"),
+        );
+    const msg = this.p.mode === "shutdown" || this.stage === 0 ? "Herdr 正在关闭…" : "正在启动 Herdr 98…";
+    return div()
+      .size_full()
+      .relative()
+      .bg("#000000")
+      .child(image(`${ASSETS}/img/splash.png`).absolute().top(0).left(0).size_full())
+      .child(
+        div()
+          .absolute()
+          .bottom(u(40))
+          .left(0)
+          .w_full()
+          .flex()
+          .justify_center()
+          .text_size(u(14))
+          .font_weight(700)
+          .text_color(C.white)
+          .child(msg),
+      );
+  }
+
+  // ---- keys
+
+  key(e, cx) {
+    const m = e.modifiers;
+    if (this.kind === "screen") return cx.stop_propagation();
+    if (e.key === "escape") {
+      this.close();
+      return cx.stop_propagation();
+    }
+    if (e.key === "enter" && this.kind !== "welcome") {
+      this.ok();
+      return cx.stop_propagation();
+    }
+    if (this.kind === "prompt" || this.kind === "run") {
+      if (e.key === "backspace") this.text = this.fresh ? "" : this.text.slice(0, -1);
+      else if (m.control && e.key === "u") this.text = "";
+      else if (m.control && e.key === "w") this.text = this.text.replace(/\S+\s*$/, "");
+      else if (m.control && e.key === "a") this.fresh = true;
+      else if (e.key_char && !m.control && !m.platform) this.text = (this.fresh ? "" : this.text) + e.key_char;
+      else if (e.key === "left" && this.machines.length) this.pickMachine(-1);
+      else if (e.key === "right" && this.machines.length) this.pickMachine(1);
+      else return;
+      if (!(m.control && e.key === "a")) this.fresh = false;
+    } else if (this.kind === "shutdown" || this.kind === "taskman") {
+      const n = this.kind === "shutdown" ? 4 : this.tasks().length;
+      if (e.key === "down") (this.kind === "shutdown" ? (this.choice = (this.choice + 1) % n) : (this.sel = Math.min(n - 1, this.sel + 1)));
+      else if (e.key === "up") (this.kind === "shutdown" ? (this.choice = (this.choice + n - 1) % n) : (this.sel = Math.max(0, this.sel - 1)));
+      else return;
+    } else return;
+    cx.stop_propagation();
+    cx.notify();
+  }
+
+  pickMachine(d) {
+    const all = [null, ...this.machines.map((x) => x.name)];
+    this.machine = all[(all.indexOf(this.machine) + d + all.length) % all.length];
+  }
+
+  ok() {
+    const p = this.p;
+    switch (this.kind) {
+      case "prompt": {
+        const name = this.text.trim();
+        if (!name) return;
+        this.close();
+        run(p.command.name, { ...(p.command.args ?? {}), name, ...(p.machines ? { machine: this.machine ?? "" } : {}) });
+        return;
+      }
+      case "run":
+        return this.runIt();
+      case "confirm": {
+        const b = (p.buttons ?? []).find((x) => x.default) ?? p.buttons?.[0];
+        this.close();
+        perform(b?.act);
+        return;
+      }
+      case "shutdown":
+        return this.shutdown();
+      case "logoff":
+        this.close();
+        run("layout.switch", { name: "main" });
+        return;
+      case "taskman":
+        return this.endTask();
+      default:
+        this.close();
+    }
+  }
+
+  runIt() {
+    const cmd = this.text.trim();
+    if (!cmd) return;
+    const hist = [cmd, ...(shared("win98.run") ?? []).filter((c) => c !== cmd)].slice(0, 12);
+    setShared("win98.run", hist);
+    this.close();
+    const name = cmd.split(/\s+/)[0].split("/").pop();
+    run("tab.new", { name, argv: ["sh", "-c", `${cmd}\nexec "\${SHELL:-sh}"`] });
+  }
+
+  shutdown() {
+    const c = this.choice;
+    this.close();
+    if (c === 0) {
+      // Stand by: every tab of the shown space to the taskbar.
+      const s = spaces().find((x) => x.active);
+      for (const t of s?.tabs ?? []) if (!t.settled) run("tab.settle", { id: t.id });
+    } else if (c === 1) {
+      openOverlay({ mod: "win98", kind: "dialog", frame: "none", modal: true, width: 1, height: 1, props: { role: "dialog", kind: "screen", mode: "shutdown" } });
+    } else if (c === 2) {
+      openOverlay({ mod: "win98", kind: "dialog", frame: "none", modal: true, width: 1, height: 1, props: { role: "dialog", kind: "screen", mode: "restart" } });
+    } else {
+      run("layout.switch", { name: "terminals" });
+    }
+  }
+
+  tasks() {
+    return terminals()
+      .filter((t) => t.state !== "已完成")
+      .map((t) => ({ address: t.address, name: t.program?.name ?? t.name ?? t.address, program: t.program, status: t.status }));
+  }
+
+  endTask() {
+    const t = this.tasks()[this.sel];
+    if (!t) return;
+    run("terminal.kill", { terminal: t.address });
+    sfx("chord");
+    this.sel = Math.max(0, this.sel - 1);
+  }
+
+  // ---- pieces
+
+  btn(u, id, text, fn, o = {}) {
+    return button(u, `dlg-${id}`, text, fn, { w: 75, h: 23, ...o });
+  }
+
+  buttons(u, list, align = "center") {
+    return h_flex()
+      .w_full()
+      .gap(u(6))
+      .map((el) => (align === "end" ? el.justify_end() : el.justify_center()))
+      .children(list);
+  }
+
+  input(u, value) {
+    return field(
+      u,
+      h_flex()
+        .h(u(15))
+        .items_center()
+        .overflow_hidden()
+        .child(div().when(this.fresh && Boolean(value), (el) => el.bg(C.select).text_color(C.selectText)).child(value))
+        .child(div().w(u(1)).h(u(13)).bg(C.text).loop("opacity", { from: 0, to: 1, period: 1060 })),
+    ).w_full();
+  }
+
+  radio(u, id, text, on, fn) {
+    const dot = image(`${ASSETS}/icons/radio-${on ? "on" : "off"}.svg`).flex_none().w(u(12)).h(u(12));
+    return h_flex()
+      .id(`radio-${id}`)
+      .gap(u(6))
+      .items_center()
+      .on_click((_e, cx) => {
+        fn();
+        cx.notify();
+      })
+      .child(dot)
+      .child(label(text));
+  }
+
+  check(u, id, text, on, fn) {
+    const box = bevel(u, "field", div().size_full().flex().items_center().justify_center().when(on, (el) => el.child(svg(`${ASSETS}/icons/check.svg`).w(u(7)).h(u(7)).text_color(C.text))), { bg: C.white })
+      .w(u(13))
+      .h(u(13))
+      .flex_none();
+    return h_flex()
+      .id(`check-${id}`)
+      .gap(u(6))
+      .items_center()
+      .on_click((_e, cx) => {
+        fn();
+        cx.notify();
+      })
+      .child(box)
+      .child(label(text));
+  }
+
+  frame(u, title, body, o = {}) {
+    const controls = o.help === false ? [] : [["help", () => {}, "帮助"]];
+    controls.push(["close", () => this.close(), "关闭"]);
+    return win(u, {
+      id: "dlg",
+      title,
+      icon: o.icon,
+      controls,
+      body,
+      status: o.status,
+    });
+  }
+
+  // ---- kinds
+
+  renderPrompt(u) {
+    const p = this.p;
+    const chips = this.machines.length
+      ? v_flex()
+          .gap(u(4))
+          .child(label("计算机："))
+          .child(
+            h_flex()
+              .gap(u(10))
+              .flex_wrap()
+              .children([null, ...this.machines.map((m) => m.name)].map((m, i) =>
+                this.radio(u, `m${i}`, m ?? "本机", this.machine === m, () => (this.machine = m)),
+              )),
+          )
+      : null;
+    return v_flex()
+      .p(u(10))
+      .gap(u(10))
+      .child(
+        h_flex()
+          .gap(u(12))
+          .items_start()
+          .child(icon(u, p.icon ?? "folder", 32))
+          .child(v_flex().flex_1().gap(u(8)).child(v_flex().children(lines(p.text))).child(this.input(u, this.text))),
+      )
+      .when(Boolean(chips), (el) => el.child(div().pl(u(44)).child(chips)))
+      .child(this.buttons(u, [this.btn(u, "ok", "确定", () => this.ok(), { default: true }), this.btn(u, "cancel", "取消", () => this.close())], "end"));
+  }
+
+  renderConfirm(u) {
+    const p = this.p;
+    const bs = p.buttons ?? [{ label: "确定", default: true }];
+    return v_flex()
+      .p(u(12))
+      .gap(u(14))
+      .child(
+        h_flex()
+          .gap(u(14))
+          .items_start()
+          .when(Boolean(p.icon), (el) => el.child(icon(u, p.icon, 32)))
+          .child(v_flex().flex_1().pt(u(6)).children(lines(p.text))),
+      )
+      .child(
+        this.buttons(
+          u,
+          bs.map((b, i) =>
+            this.btn(u, `b${i}`, b.label, () => {
+              this.close();
+              perform(b.act);
+            }, { default: b.default }),
+          ),
+        ),
+      );
+  }
+
+  renderRun(u) {
+    return v_flex()
+      .p(u(10))
+      .gap(u(12))
+      .child(
+        h_flex()
+          .gap(u(12))
+          .items_start()
+          .child(icon(u, "run", 32))
+          .child(v_flex().flex_1().children(lines("输入程序名称，Herdr 会在新窗口中打开它。"))),
+      )
+      .child(
+        h_flex()
+          .gap(u(8))
+          .items_center()
+          .child(div().w(u(32)).child(label("打开：")))
+          .child(
+            h_flex()
+              .flex_1()
+              .child(div().flex_1().child(this.input(u, this.text)))
+              .child(button(u, "dlg-hist", svg(`${ASSETS}/icons/arrow-down.svg`).w(u(7)).h(u(4)).text_color(C.text), () => {
+                const hist = shared("win98.run") ?? [];
+                const i = hist.indexOf(this.text);
+                this.text = hist[(i + 1) % Math.max(1, hist.length)] ?? "";
+                this.fresh = true;
+              }, { w: 16, h: 21, pad: [0, 0] })),
+          ),
+      )
+      .child(
+        this.buttons(u, [
+          this.btn(u, "ok", "确定", () => this.ok(), { default: true }),
+          this.btn(u, "cancel", "取消", () => this.close()),
+          this.btn(u, "browse", "浏览...", null, { disabled: true }),
+        ], "end"),
+      );
+  }
+
+  renderShutdown(u) {
+    const opts = ["待机", "关机", "重新启动", "以 DOS 模式重新启动"];
+    return v_flex()
+      .p(u(10))
+      .gap(u(12))
+      .child(
+        h_flex()
+          .gap(u(14))
+          .items_start()
+          .child(icon(u, "shutdown", 32))
+          .child(
+            v_flex()
+              .gap(u(8))
+              .child("希望计算机做什么？")
+              .children(opts.map((o, i) => this.radio(u, `sd${i}`, o, this.choice === i, () => (this.choice = i)))),
+          ),
+      )
+      .child(
+        this.buttons(u, [
+          this.btn(u, "ok", "确定", () => this.ok(), { default: true }),
+          this.btn(u, "cancel", "取消", () => this.close()),
+          this.btn(u, "help", "帮助", () => run("app.help", {})),
+        ]),
+      );
+  }
+
+  renderLogoff(u) {
+    return v_flex()
+      .p(u(12))
+      .gap(u(14))
+      .child(h_flex().gap(u(14)).items_center().child(icon(u, "logoff", 32)).child("确定要注销吗？"))
+      .child(this.buttons(u, [this.btn(u, "yes", "是", () => this.ok(), { default: true }), this.btn(u, "no", "否", () => this.close())]));
+  }
+
+  renderAbout(u) {
+    const up = updates();
+    const n = terminals().length;
+    const a = agents().length;
+    return v_flex()
+      .p(u(10))
+      .gap(u(10))
+      .child(image(`${ASSETS}/img/about.png`).w(u(356)).h(u(80)))
+      .child(
+        h_flex()
+          .gap(u(14))
+          .items_start()
+          .child(icon(u, "computer", 32))
+          .child(
+            v_flex()
+              .flex_1()
+              .gap(u(2))
+              .child("Herdr 98")
+              .child(`版本 ${up?.app?.version ?? "4.10.1998"} 第二版`)
+              .child("版权所有 © 1981-2026 The Herd Corp.")
+              .child(div().h(u(6)))
+              .child("本产品授权给：")
+              .child(div().pl(u(12)).child(userName()))
+              .child(div().pl(u(12)).child("个人使用版"))
+              .child(div().h(u(6)))
+              .child(etch(u))
+              .child(div().h(u(4)))
+              .child(`运行中的终端：  ${n}`)
+              .child(`工作中的智能体：  ${a}`)
+              .child(`herdr-core:  ${up?.core?.version ?? "?"}`)
+              .child("智能体可用物理内存：  64.0 MB RAM"),
+          ),
+      )
+      .child(this.buttons(u, [this.btn(u, "ok", "确定", () => this.close(), { default: true })], "end"));
+  }
+
+  renderTaskman(u) {
+    const tasks = this.tasks();
+    if (this.sel >= tasks.length) this.sel = Math.max(0, tasks.length - 1);
+    const list = v_flex()
+      .id("tasks")
+      .h(u(150))
+      .overflow_y_scroll()
+      .children(
+        tasks.map((t, i) =>
+          h_flex()
+            .id(`task-${t.address}`)
+            .h(u(16))
+            .px(u(2))
+            .gap(u(4))
+            .items_center()
+            .when(i === this.sel, (el) => el.bg(C.select).text_color(C.selectText))
+            .on_click((e, cx) => {
+              this.sel = i;
+              if (e.click_count >= 2) {
+                this.close();
+                run("agent.focus", { terminal: t.address });
+              }
+              cx.notify();
+            })
+            .child(programIcon(u, t.program, 16))
+            .child(div().flex_1().truncate().child(`${t.name}${t.status ? ` (${t.status})` : ""}`))
+            .child(div().text_color(i === this.sel ? C.selectText : C.gray).child(t.address)),
+        ),
+      );
+    return v_flex()
+      .p(u(10))
+      .gap(u(10))
+      .child(field(u, list, { pad: [1, 1] }))
+      .child(
+        v_flex()
+          .children(lines("警告：再次按 CTRL+ALT+DEL 将重新启动电脑。\n所有正在运行的程序中未保存的信息都会丢失。")),
+      )
+      .child(
+        this.buttons(u, [
+          this.btn(u, "end", "结束任务", () => this.endTask(), { default: true }),
+          this.btn(u, "sd", "关机", () => {
+            this.close();
+            openDialog("shutdown", {});
+          }),
+          this.btn(u, "cancel", "取消", () => this.close()),
+        ]),
+      );
+  }
+
+  renderDisplay(u) {
+    const tabs = ["背景", "效果", "设置"];
+    const tabRow = h_flex()
+      .items_end()
+      .pl(u(4))
+      .children(
+        tabs.map((t, i) => {
+          const on = i === this.page;
+          return div()
+            .id(`dtab-${i}`)
+            .relative()
+            .top(on ? u(1) : u(0))
+            .on_click((_e, cx) => {
+              this.page = i;
+              cx.notify();
+            })
+            .child(
+              div()
+                .border_t(u(1))
+                .border_l(u(1))
+                .border_r(u(1))
+                .border_color(C.hi)
+                .child(
+                  div()
+                    .border_r(u(1))
+                    .border_color(C.dark)
+                    .bg(C.face)
+                    .px(u(on ? 8 : 6))
+                    .py(u(on ? 3 : 2))
+                    .child(label(t)),
+                ),
+            );
+        }),
+      );
+    const desktop = shared("win98.desktop") ?? "#008080";
+    const colors = [["（无）", "#008080"], ["黑色", "#000000"], ["海军蓝", "#000080"], ["梅红", "#5c3566"], ["森林", "#004000"], ["云", "clouds"]];
+    const scaleNow = scale();
+    const page = [
+      v_flex()
+        .gap(u(8))
+        .child(
+          h_flex()
+            .justify_center()
+            .child(
+              div()
+                .relative()
+                .w(u(184))
+                .h(u(170))
+                .child(image(`${ASSETS}/img/monitor.png`).absolute().top(0).left(0).w(u(184)).h(u(170)))
+                .child(
+                  div()
+                    .absolute()
+                    .left(u(17))
+                    .top(u(16))
+                    .w(u(152))
+                    .h(u(112))
+                    .bg(desktop === "clouds" ? "#6fa8dc" : desktop)
+                    .when(desktop === "clouds", (el) => el.child(image(`${ASSETS}/img/clouds.png`).size_full())),
+                ),
+            ),
+        )
+        .child(label("墙纸："))
+        .child(
+          field(
+            u,
+            v_flex().children(
+              colors.map(([n, c]) =>
+                h_flex()
+                  .id(`bg-${n}`)
+                  .h(u(16))
+                  .px(u(2))
+                  .items_center()
+                  .when(desktop === c, (el) => el.bg(C.select).text_color(C.selectText))
+                  .on_click(() => setDesktop(c))
+                  .child(n),
+              ),
+            ),
+            { pad: [1, 1] },
+          ),
+        ),
+      v_flex()
+        .gap(u(10))
+        .p(u(6))
+        .child(this.check(u, "snd", "播放声音（启动、对话框、游戏）", shared("win98.mute") !== true, () => setShared("win98.mute", shared("win98.mute") !== true)))
+        .child(this.check(u, "clippy", "显示 Office 助手", shared("win98.clippy") !== "off", () => setShared("win98.clippy", shared("win98.clippy") === "off" ? "on" : "off")))
+        .child(etch(u))
+        .child(v_flex().text_color(C.gray).children(lines("声音也遵循 Herdr 自身的设置\n（控制面板 > 提醒）。"))),
+      v_flex()
+        .gap(u(10))
+        .p(u(6))
+        .child(label("字体大小："))
+        .child(this.radio(u, "s1", "小字体（像素级）", scaleNow === 1, () => setShared("win98.scale", 1)))
+        .child(this.radio(u, "s2", "大字体（像素加倍）", scaleNow === 2, () => setShared("win98.scale", 2)))
+        .child(etch(u))
+        .child(v_flex().text_color(C.gray).children(lines(`Herdr 的缩放是 ${settings()?.zoom ?? 1}x；Herdr 98 在任何缩放下都按整像素绘制。`))),
+    ][this.page];
+    return v_flex()
+      .p(u(8))
+      .gap(u(0))
+      .child(tabRow)
+      .child(bevel(u, "window", div().p(u(10)).min_h(u(300)).child(page), { bg: C.face }))
+      .child(div().h(u(10)))
+      .child(
+        this.buttons(u, [
+          this.btn(u, "ok", "确定", () => this.close(), { default: true }),
+          this.btn(u, "cancel", "取消", () => this.close()),
+          this.btn(u, "apply", "应用", null, { disabled: true }),
+        ], "end"),
+      );
+  }
+
+  renderDatetime(u) {
+    const d = new Date();
+    const y = d.getFullYear();
+    const mo = d.getMonth();
+    const first = new Date(y, mo, 1).getDay();
+    const days = new Date(y, mo + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < first; i++) cells.push(null);
+    for (let i = 1; i <= days; i++) cells.push(i);
+    while (cells.length % 7) cells.push(null);
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+    const cal = v_flex()
+      .bg(C.white)
+      .child(h_flex().bg(C.gray).text_color(C.white).children(["S", "M", "T", "W", "T", "F", "S"].map((x) => div().w(u(22)).flex().justify_center().child(x))))
+      .children(
+        weeks.map((w) =>
+          h_flex().children(
+            w.map((n) =>
+              div()
+                .w(u(22))
+                .h(u(16))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(n === d.getDate(), (el) => el.bg(C.select).text_color(C.selectText))
+                .child(n ? String(n) : ""),
+            ),
+          ),
+        ),
+      );
+    const month = d.toLocaleDateString("en-US", { month: "long" });
+    const time = d.toLocaleTimeString("en-US");
+    return v_flex()
+      .p(u(10))
+      .gap(u(10))
+      .child(
+        h_flex()
+          .gap(u(12))
+          .items_start()
+          .child(
+            v_flex()
+              .gap(u(6))
+              .child(h_flex().gap(u(6)).child(field(u, div().w(u(80)).child(month))).child(field(u, div().w(u(40)).child(String(y)))))
+              .child(field(u, cal, { pad: [0, 0] })),
+          )
+          .child(v_flex().gap(u(6)).items_center().child(clockFace(u, d)).child(field(u, div().w(u(90)).flex().justify_center().child(time)))),
+      )
+      .child(div().child(`Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`))
+      .child(this.buttons(u, [this.btn(u, "ok", "确定", () => this.close(), { default: true }), this.btn(u, "cancel", "取消", () => this.close())], "end"));
+  }
+
+  explorer(u, items, status) {
+    const grid = h_flex()
+      .flex_wrap()
+      .gap(u(8))
+      .p(u(8))
+      .items_start()
+      .children(
+        items.map((it, i) =>
+          v_flex()
+            .id(`ex-${i}`)
+            .w(u(76))
+            .items_center()
+            .gap(u(2))
+            .on_click((e, cx) => {
+              this.sel = i;
+              if (it.act) {
+                this.close();
+                perform(it.act);
+              }
+              cx.notify();
+            })
+            .child(it.img ? image(it.img).w(u(32)).h(u(32)) : icon(u, it.icon, 32))
+            .child(
+              div()
+                .px(u(1))
+                .text_center()
+                .when(i === this.sel, (el) => el.bg(C.select).text_color(C.selectText))
+                .child(it.label),
+            ),
+        ),
+      );
+    return v_flex()
+      .child(
+        field(
+          u,
+          div()
+            .h(u(200))
+            .id("ex-scroll")
+            .overflow_y_scroll()
+            .child(items.length ? grid : div().p(u(10)).text_color(C.gray).child("此文件夹为空。")),
+          { pad: [0, 0] },
+        ),
+      )
+      .child(h_flex().pt(u(2)).gap(u(2)).child(well(u, div().child(status)).flex_1()).child(well(u, h_flex().gap(u(4)).child(icon(u, "computer", 16)).child("我的电脑")).w(u(120))));
+  }
+
+  renderMyComputer(u) {
+    const letters = "CDEFGHIJKLMNOPQRSTUVWXYZ";
+    const items = spaces().map((s, i) => ({
+      label: `${s.name} (${letters[i] ?? "Z"}:)`,
+      icon: s.machine ? "netdrive" : "drive",
+      act: { run: ["space.select", { id: s.id }] },
+    }));
+    items.push({ label: "控制面板", icon: "control", act: { run: ["app.settings", {}] } });
+    items.push({ label: "打印机", icon: "printer", act: { dialog: { kind: "message", title: "打印机", icon: "error", text: "没有安装打印机。\n打印终端是一种选择，不是功能。" } } });
+    return this.explorer(u, items, `${items.length} 个对象`);
+  }
+
+  renderNetwork(u) {
+    const items = [
+      { label: "整个网络", icon: "network", act: null },
+      { label: "本机", icon: "computer", act: { dialog: { kind: "prompt", title: "新建空间", text: "输入新空间的名称：", icon: "folder", command: { name: "space.new", args: { machine: "" } } } } },
+      ...this.machines.map((m) => ({
+        label: m.name,
+        icon: "computer",
+        act: { dialog: { kind: "prompt", title: `在 ${m.name} 上新建空间`, text: `输入 ${m.name} 上新空间的名称：`, icon: "netdrive", command: { name: "space.new", args: { machine: m.name } } } },
+      })),
+    ];
+    return this.explorer(u, items, `${items.length} 个对象`);
+  }
+
+  renderWelcome(u) {
+    const items = [
+      { icon: "programs", title: "启动智能体", text: "Herdr 会在窗口中运行你的编程智能体，\n仿佛同时身处 1998 年与未来。\n\n从 开始 > 程序 > 智能体 启动，\n或在运行框中输入它的名字。", go: "运行...", act: { dialog: { kind: "run", value: "claude" } } },
+      { icon: "help", title: "探索 Herdr 98", text: "任务栏就是标签页。桌面上的\n文件夹就是空间。每个窗口都是一个窗格：\n双击标题栏可最大化，点 _ 可最小化。\n\nCtrl+Esc 打开开始菜单。", go: "帮助", act: { run: ["app.help", {}] } },
+      { icon: "mines", title: "玩扫雷", text: "智能体正在思考。\n该休息一下了。\n\n桌面上还有纸牌。", go: "玩一局", act: { app: "mines" } },
+      { icon: "taskman", title: "维护计算机", text: "查看 Herdr 运行的所有程序，结束不再需要的程序。\n\n随时按 Ctrl+Shift+Esc 打开。", go: "打开", act: { dialog: { kind: "taskman" } } },
+      { icon: "logoff", title: "离开 Herdr 98", text: "想念未来？注销会回到 Herdr 的常规布局。\n终端会继续运行。", go: "注销", act: { dialog: { kind: "logoff" } } },
+    ];
+    const it = items[this.sel] ?? items[0];
+    const show = shared("win98.welcome") !== "off";
+    return v_flex()
+      .child(
+        div()
+          .relative()
+          .h(u(56))
+          .flex()
+          .items_center()
+          .px(u(16))
+          .child(gradient("#ffffff", "#6aa6e8"))
+          .child(
+            h_flex()
+              .relative()
+              .items_end()
+              .gap(u(6))
+              .child(icon(u, "start", 32))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color(C.navy).child("欢迎使用"))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).font_weight(700).text_color(C.text).child("Herdr"))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color("#d07000").child("98")),
+          ),
+      )
+      .child(
+        h_flex()
+          .items_stretch()
+          .h(u(230))
+          .child(
+            v_flex()
+              .w(u(190))
+              .p(u(8))
+              .gap(u(2))
+              .bg("#000080")
+              .child(div().pb(u(4)).text_color("#ffff80").font_weight(700).child("目录"))
+              .children(
+                items.map((x, i) =>
+                  h_flex()
+                    .id(`wl-${i}`)
+                    .gap(u(8))
+                    .p(u(3))
+                    .items_center()
+                    .text_color(i === this.sel ? "#ffff80" : C.white)
+                    .on_mouse_move((_e, cx) => {
+                      if (this.sel === i) return;
+                      this.sel = i;
+                      cx.notify();
+                    })
+                    .on_click(() => {
+                      this.close();
+                      perform(x.act);
+                    })
+                    .child(icon(u, x.icon, 32))
+                    .child(div().when(i === this.sel, (el) => el.underline()).child(x.title)),
+                ),
+              ),
+          )
+          .child(
+            v_flex()
+              .flex_1()
+              .p(u(14))
+              .gap(u(10))
+              .bg(C.white)
+              .child(div().text_size(u(16)).line_height(`${u(20)}px`).font_weight(700).text_color(C.navy).child(it.title))
+              .child(v_flex().children(lines(it.text)))
+              .child(div().flex_1())
+              .child(h_flex().justify_end().child(this.btn(u, "go", it.go, () => {
+                this.close();
+                perform(it.act);
+              }, { default: true }))),
+          ),
+      )
+      .child(etch(u))
+      .child(
+        h_flex()
+          .p(u(8))
+          .justify_between()
+          .items_center()
+          .child(this.check(u, "wl-show", "每次启动 Herdr 98 时显示此屏幕", show, () => setShared("win98.welcome", show ? "off" : "on")))
+          .child(this.btn(u, "close", "关闭", () => this.close())),
+      );
+  }
+
+  renderBin(u) {
+    return v_flex()
+      .child(this.explorer(u, [], "0 个对象"))
+      .child(div().h(u(8)))
+      .child(this.buttons(u, [this.btn(u, "empty", "清空回收站", () => sfx("recycle"), { w: 120 })], "end"));
+  }
+
+  render(_cx) {
+    const u = unit();
+    const p = this.p;
+    if (this.kind === "screen")
+      return root(u, div().id("screen").track_focus(this.focus).on_key_down((e, cx) => this.key(e, cx)).size_full()).child(this.renderScreen(u));
+    const body =
+      {
+        prompt: () => this.renderPrompt(u),
+        confirm: () => this.renderConfirm(u),
+        message: () => this.renderConfirm(u),
+        run: () => this.renderRun(u),
+        shutdown: () => this.renderShutdown(u),
+        logoff: () => this.renderLogoff(u),
+        about: () => this.renderAbout(u),
+        taskman: () => this.renderTaskman(u),
+        display: () => this.renderDisplay(u),
+        datetime: () => this.renderDatetime(u),
+        mycomputer: () => this.renderMyComputer(u),
+        network: () => this.renderNetwork(u),
+        bin: () => this.renderBin(u),
+        welcome: () => this.renderWelcome(u),
+      }[this.kind]?.() ?? div().p(u(10)).child(`Unknown dialog ${this.kind}`);
+    const explorerish = ["mycomputer", "network", "bin"].includes(this.kind);
+    const iconFor = { mycomputer: "computer", network: "network", bin: "bin", display: "display", run: "run", taskman: "taskman", datetime: "clock" }[this.kind];
+    return root(
+      u,
+      v_flex()
+        .id("dialog")
+        .track_focus(this.focus)
+        .on_key_down((e, cx) => this.key(e, cx))
+        .w_full()
+        .min_h(0),
+    ).child(
+      this.frame(u, p.title ?? KIND_TITLE[this.kind] ?? "Herdr", body, {
+        icon: iconFor ? icon(u, iconFor, 16) : null,
+        help: !explorerish,
+      }),
+    );
+  }
+}
+
+function setDesktop(c) {
+  setShared("win98.desktop", c);
+  const l = layout();
+  if (!l || typeof l !== "object") return;
+  l.background = c === "clouds" ? { image: `${ASSETS}/img/clouds.png`, fit: "cover" } : c;
+  run("layout.set", { layout: l });
+}
+
+function clockFace(u, d) {
+  const size = 96;
+  // GPUI can't rotate a div: draw the hands as dots along their angle.
+  const dots = (deg, len, sizeDot, color) => {
+    const out = [];
+    const r = (deg * Math.PI) / 180;
+    for (let i = 0; i < len; i += sizeDot) {
+      const x = size / 2 + Math.sin(r) * i - sizeDot / 2;
+      const y = size / 2 - Math.cos(r) * i - sizeDot / 2;
+      out.push(div().absolute().left(u(Math.round(x))).top(u(Math.round(y))).w(u(sizeDot)).h(u(sizeDot)).bg(color));
+    }
+    return out;
+  };
+  const ticks = [];
+  for (let i = 0; i < 12; i++) {
+    const r = (i * 30 * Math.PI) / 180;
+    const x = size / 2 + Math.sin(r) * 40 - 2;
+    const y = size / 2 - Math.cos(r) * 40 - 2;
+    ticks.push(div().absolute().left(u(Math.round(x))).top(u(Math.round(y))).w(u(4)).h(u(4)).bg(i % 3 === 0 ? C.navy : "#008080"));
+  }
+  const h = d.getHours() % 12;
+  const m = d.getMinutes();
+  const s = d.getSeconds();
+  return div()
+    .relative()
+    .w(u(size))
+    .h(u(size))
+    .children(ticks)
+    .children(dots(h * 30 + m / 2, 24, 3, C.text))
+    .children(dots(m * 6, 34, 2, C.text))
+    .children(dots(s * 6, 36, 1, "#ff0000"));
+}

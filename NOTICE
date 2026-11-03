@@ -1,0 +1,7 @@
+Herdr 中文语言包
+
+界面文件（zh-cn/reference/ 与 zh-cn/orig/ 下的 frame/ 与 mods/）来自 herdrdev/herdr-app，
+Copyright The Herdr authors，依 Apache License 2.0 授权：
+https://github.com/herdrdev/herdr-app
+
+这些文件经过翻译与少量中文化改动；规则表 patches.json 由两者生成，改动部分同样以 Apache License 2.0 提供。
