@@ -24,6 +24,7 @@ const INPUT = /^\s*(?:[│┃║|]\s*)?[>❯›]\s*[▌█_|]?$|\b(type|answer|r
 // Approve / Approve <tool> for this session / Deny，Allow once / Always allow / Reject。
 const CHOICE = /^(approve|deny|allow|reject|always allow|always approve|allow once|approve once|confirm|cancel|yes|no)\b/i;
 const CHECKBOX = /^[☐☑□■]\s+/;
+const RADIO = /^[○●◉◯]\s+/;
 const MARKER = /^[❯›▶►]\s+(.+)$/;
 const OTHER = /^(other|其他|自己输入|自定义|type something|specify|custom|输入)/i;
 const KEYED = [
@@ -107,6 +108,7 @@ function tailIsQuiet(lines, end, allowInput = false) {
   // 带 Other 的选项允许下面跟一个自由输入行。
   for (let i = end + 1; i < lines.length; i++) {
     const line = lines[i];
+    if (/^\s*[╰└]/.test(line)) return true;
     if (isBorder(line)) continue;
     const text = stripBox(line);
     if (!text) continue;
@@ -179,9 +181,14 @@ function choiceLine(text) {
   if (/^allow tool\b/i.test(text) || /^permission\b/i.test(text)) return null;
   const marker = text.match(MARKER);
   if (marker) {
-    const label = marker[1].trim();
+    let label = marker[1].trim();
+    if (RADIO.test(label)) label = label.replace(RADIO, "").trim();
+    else if (CHECKBOX.test(label)) label = label.replace(CHECKBOX, "").trim();
     if (!label || NUMBERED.test(label)) return null;
     return { label, answer: true, marker: true, key: null };
+  }
+  if (RADIO.test(text)) {
+    return { label: text.replace(RADIO, "").trim(), answer: true, marker: false, key: null };
   }
   if (CHECKBOX.test(text)) {
     return { label: text.replace(CHECKBOX, "").trim(), answer: false, marker: false, key: null };
@@ -209,7 +216,7 @@ function choiceRun(lines) {
     if (!text) { if (end >= 0) break; continue; }
     if (HINT.test(text) || STATUS.test(text)) continue;
     if (choiceLine(text)) { end = i; break; }
-    break;
+    // 状态栏/页脚可能在对话框下面，继续向上找实际的选项行。
   }
   if (end < 0) return null;
   const rows = [];
@@ -236,6 +243,41 @@ function choiceRun(lines) {
   return { start, end: last, rows };
 }
 
+function questionInBox(lines, start, boxStart) {
+  const picked = [];
+  for (let i = start - 1; i > boxStart && picked.length < 3; i--) {
+    const text = stripBox(lines[i]);
+    if (!text || /^[├┤┬┴┼─]+$/.test(text)) continue;
+    if (/^(Ask|Submit|认证方式\s+弹窗触发)/i.test(text)) continue;
+    picked.unshift(text);
+    if (QUESTION.test(text) || DIALOG.test(text) || ASK.test(text)) break;
+  }
+  return picked.join("\n").slice(-800);
+}
+
+// omp 的 Ask 面板用 ○ 单选项，每个选项下面可以跟一段说明；只取面板里的选项行，
+// 跳过说明文字，避免把长描述当成新的正文。
+function radioRun(lines) {
+  let boxStart = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*[╭┌].*\bAsk\b/i.test(lines[i])) { boxStart = i; break; }
+  }
+  if (boxStart < 0) return null;
+  const rows = [];
+  for (let i = boxStart + 1; i < lines.length; i++) {
+    if (/^\s*[╰└]/.test(lines[i])) break;
+    const text = stripBox(lines[i]);
+    if (!text) continue;
+    const choice = choiceLine(text);
+    if (choice && choice.marker || choice && RADIO.test(text)) rows.push({ ...choice, line: i });
+  }
+  if (rows.length < 2) return null;
+  const start = rows[0].line;
+  const last = rows[rows.length - 1].line;
+  if (!tailIsQuiet(lines, last)) return null;
+  return { start, end: last, rows, question: questionInBox(lines, start, boxStart) };
+}
+
 function choiceOptions(run) {
   const selected = run.rows.findIndex((row) => row.marker);
   const approveOnce = run.rows.findIndex((row) => /^(approve once|approve|allow once)$/i.test(row.label));
@@ -258,6 +300,7 @@ function choiceOptions(run) {
       keys,
       selected: row.marker,
       default: index === base,
+      other: /^(other|其他|自己输入|自定义|type something|specify|custom|输入)/i.test(row.label),
     });
   });
   return options.length >= 2 ? options : null;
@@ -304,10 +347,10 @@ export function parseApproval(raw, options = {}) {
   }
 
   // 无编号 / 高亮选择列表：omp、opencode、Pi 的二级菜单。
-  const choices = choiceRun(lines);
+  const choices = radioRun(lines) || choiceRun(lines);
   if (choices) {
     const opts = choiceOptions(choices);
-    const before = questionBefore(lines, choices.start);
+    const before = choices.question ? { text: choices.question, marker: true } : questionBefore(lines, choices.start);
     const hasMarker = choices.rows.some((row) => row.marker);
     const hasKnown = choices.rows.some((row) => row.answer && CHOICE.test(row.label));
     if (opts && (before.marker || hasMarker || hasKnown)) {

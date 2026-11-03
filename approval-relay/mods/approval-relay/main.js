@@ -10,6 +10,19 @@ import { v_flex, h_flex } from "gpui-base";
 import * as fsp from "fs/promises";
 import { agents, appHome, exec, hc, nextCommand, notify, run, setShared, shared, theme, window } from "herdr";
 import { parseApproval, screenHash } from "./parse.js";
+
+function approvalSignature(parsed) {
+  return JSON.stringify({
+    kind: parsed.kind ?? (parsed.generic ? "text" : "options"),
+    question: parsed.question ?? "",
+    options: (parsed.options ?? []).map((option) => ({
+      label: option.label,
+      keys: option.keys,
+      selected: Boolean(option.selected),
+      other: Boolean(option.other),
+    })),
+  });
+}
 import { resolveLanguage, makeT, findShortcut } from "./i18n.js";
 
 const VERSION = "0.2.0";
@@ -384,8 +397,13 @@ export default class ApprovalRelay extends View {
       }
       const parsed = parseApproval(screen, { app: agent.app });
       if (!parsed) return;
+      const signature = approvalSignature(parsed);
+      if (pending && pending.signature === signature) {
+        pending.checkedAt = Date.now();
+        return;
+      }
       if (pending) await this.cancelRequest(address, "updated", false);
-      await this.enqueue(agent, parsed, screen, hash);
+      await this.enqueue(agent, parsed, screen, hash, signature);
     } finally {
       this.reading.delete(address);
     }
@@ -404,7 +422,7 @@ export default class ApprovalRelay extends View {
     }
   }
 
-  async enqueue(agent, parsed, screen, hash) {
+  async enqueue(agent, parsed, screen, hash, signature = "") {
     const id = `${safeName(agent.address)}-${Date.now().toString(36)}`;
     await this.removeQueued(agent.address);
     const request = {
@@ -424,6 +442,7 @@ export default class ApprovalRelay extends View {
       lang: this.lang,
       openKey: this.openKey,
       hash,
+      signature,
       attempts: this.attempts.get(agent.address) ?? 0,
       created: Date.now(),
       updated: Date.now(),

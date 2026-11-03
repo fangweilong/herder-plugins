@@ -122,6 +122,35 @@ Enter to submit · Esc to cancel`);
   assert.equal(p.options[2].other, true);
 });
 
+
+test("omp Ask panel parses radio options and Other across descriptions", () => {
+  const p = parseApproval(`╭─ Ask ─────────────────────────────────────────────╮
+│ GitHub/GitLab 登录弹窗用哪种凭据？（GitHub 官方已不接受密码）
+├───────────────────────────────────────────────────┤
+│ ❯ ○ Token 登录（推荐）
+│       弹窗粘贴 PAT，一键打开创建页。
+│   ○ 浏览器 OAuth 授权
+│       GitHub Device Flow / GitLab OAuth。
+│   ○ 账密直连（Basic）
+│       仅对自建实例可能有效。
+│   ○ Other (type your own)
+├───────────────────────────────────────────────────┤
+│ ⏎ select · n note · ↑/↓ move · ⎋ cancel
+╰───────────────────────────────────────────────────╯
+ 2026-11-03 15:11:59  ⚡ 106.8 tok/s
+OpenCode Go  mo 54%`);
+  assert.ok(p);
+  assert.equal(p.kind, "options");
+  assert.match(p.question, /GitHub\/GitLab 登录弹窗/);
+  assert.deepEqual(p.options.map((o) => o.label), [
+    "Token 登录（推荐）",
+    "浏览器 OAuth 授权",
+    "账密直连（Basic）",
+    "Other (type your own)",
+  ]);
+  assert.equal(p.options[3].other, true);
+});
+
 test("numbered options are tagged as options", () => {
   const p = parseApproval(fake);
   assert.equal(p.kind, "options");
