@@ -310,6 +310,9 @@ export function parseApproval(raw, options = {}) {
   const text = cleanScreen(raw);
   const lines = text.split("\n");
   const runs = numberedRuns(lines).filter((run) => run.items.length >= 2);
+  const askCount = Number((text.match(/\bAsk\s+(\d+)\s+questions\b/i) ?? [])[1] ?? 1);
+  const sectionCount = (text.match(/\[[^\]\n]+\]\s*·\s*(?:multi\s*·\s*)?options:\d+/gi) ?? []).length;
+  const questionCount = Math.max(askCount || 1, sectionCount, 1);
 
   // 取最靠近底部的一段选项；中间夹着描述行也算同一段（只保留连续编号的项）。
   const quietRuns = runs.filter((r) => {
@@ -338,12 +341,14 @@ export function parseApproval(raw, options = {}) {
         default: index === 0,
         other: isOther(item.label),
       })),
+      questionCount,
+      multiQuestion: questionCount > 1,
     };
   }
 
   const yn = yesNo(lines);
   if (yn && tailIsQuiet(lines, yn.line)) {
-    return { kind: "options", generic: false, question: yn.question, options: yn.options, defaultOption: yn.defaultOption };
+    return { kind: "options", generic: false, question: yn.question, options: yn.options, defaultOption: yn.defaultOption, questionCount, multiQuestion: questionCount > 1 };
   }
 
   // 无编号 / 高亮选择列表：omp、opencode、Pi 的二级菜单。
@@ -354,7 +359,7 @@ export function parseApproval(raw, options = {}) {
     const hasMarker = choices.rows.some((row) => row.marker);
     const hasKnown = choices.rows.some((row) => row.answer && CHOICE.test(row.label));
     if (opts && (before.marker || hasMarker || hasKnown)) {
-      return { kind: "options", generic: false, question: before.text, options: opts };
+      return { kind: "options", generic: false, question: before.text, options: opts, questionCount, multiQuestion: questionCount > 1 };
     }
   }
 
@@ -368,7 +373,7 @@ export function parseApproval(raw, options = {}) {
     if (HINT.test(text) || INPUT.test(text)) canAnswer = true;
   }
   if (askIndex >= 0 && canAnswer) {
-    return { kind: "text", generic: true, question: questionNear(lines, askIndex), options: [] };
+    return { kind: "text", generic: true, question: questionNear(lines, askIndex), options: [], questionCount, multiQuestion: questionCount > 1 };
   }
 
   return null;

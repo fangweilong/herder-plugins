@@ -435,6 +435,8 @@ export default class ApprovalRelay extends View {
       tabIndex: agent.tab_index ?? null,
       title: agent.title ?? "",
       question: parsed.question ?? "",
+      questionCount: parsed.questionCount ?? 1,
+      multiQuestion: Boolean(parsed.multiQuestion),
       kind: parsed.kind ?? (parsed.generic ? "text" : "options"),
       generic: Boolean(parsed.generic),
       options: parsed.options ?? [],

@@ -103,6 +103,7 @@ $script:TranslationCache = @{}
 $script:ScreenTranslated = $false
 $script:ScreenTranslation = ""
 $script:OtherKeys = @()
+$script:MultiQuestion = $false
 $script:LastActivity = Get-Date
 
 function Resolve-Language([string]$requestLang) {
@@ -1013,7 +1014,7 @@ function Update-Texts {
   $needChip.Width = $needChip.PreferredWidth()
   $translateButton.Text = if ($script:TranslationVisible) { T "translate.hide" } else { T "translate.button" }
   $translateButton.Width = $translateButton.PreferredWidth()
-  $translateButton.Visible = $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
+  $translateButton.Visible = -not $script:MultiQuestion -and $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
   $trKey = if ($script:Active -and [string]$script:Active.question) { "translate.questionBy" } else { "translate.by" }
   $translationHeader.Text = if ($script:TranslationProvider) { (T $trKey).Replace("{p}", $script:TranslationProvider) } else { T "translate.failed" }
   $screenTransHeader.Text = T "popup.screenTranslated"
@@ -1023,14 +1024,20 @@ function Update-Texts {
   $termTranslate.Width = $termTranslate.PreferredWidth()
   $termToggle.Text = if ($script:ScreenExpanded) { T "popup.collapse" } else { T "popup.expand" }
   $termRefresh.Text = T "popup.refresh"
-  $optionsLabel.Text = if (@($script:Active.options).Count -gt 0) { T "popup.choose" } elseif ($script:Active.kind -eq "text") { T "popup.answer" } else { T "popup.generic" }
+  if ($script:MultiQuestion) {
+    $optionsLabel.Text = (T "popup.multiQuestion").Replace("{n}", [string]$script:Active.questionCount)
+  } else {
+    $optionsLabel.Text = if (@($script:Active.options).Count -gt 0) { T "popup.choose" } elseif ($script:Active.kind -eq "text") { T "popup.answer" } else { T "popup.generic" }
+  }
   $sendButton.Text = T "popup.send"
   $sendButton.Width = $sendButton.PreferredWidth()
   $openButton.Text = T "popup.open"
   $openButton.Width = $openButton.PreferredWidth()
   $ignoreButton.Text = T "popup.ignore"
   $ignoreButton.Width = $ignoreButton.PreferredWidth()
-  if (@($script:Active.options).Count -gt 0) {
+  if ($script:MultiQuestion) {
+    $shortcutLabel.Text = T "popup.hintMulti"
+  } elseif (@($script:Active.options).Count -gt 0) {
     $shortcutLabel.Text = (T "popup.hintDefaults") + "  ·  " + (T "popup.hintTranslate")
   } elseif ($script:Active.kind -eq "text") {
     $shortcutLabel.Text = (T "popup.hintText")
@@ -1134,7 +1141,7 @@ function Layout-Form {
   $hasOptions = @($script:Active.options).Count -gt 0
   $qHeadLabel.Visible = $hasQuestion -or $hasOptions
   $qHeadLabel.Location = New-Object System.Drawing.Point($x, $qHeadY)
-  $translateButton.Visible = $hasQuestion -or $hasOptions
+  $translateButton.Visible = -not $script:MultiQuestion -and ($hasQuestion -or $hasOptions)
   $buttonWidth = $translateButton.PreferredWidth()
   $translateButton.Location = New-Object System.Drawing.Point(($x + $inner - $buttonWidth), ($qHeadY - (S 2)))
   $translateButton.Size = New-Object System.Drawing.Size($buttonWidth, (S 24))
@@ -1206,8 +1213,22 @@ function Layout-Form {
   $optionsLabel.Location = New-Object System.Drawing.Point($x, $oY)
   $rowY = $oY + (S 24)
   $optionCount = @($script:Active.options).Count
-  if ($optionCount -gt 0) {
+  if ($script:MultiQuestion) {
     $optionsLabel.Visible = $true
+    $optionsLabel.AutoSize = $false
+    $optionsLabel.Size = New-Object System.Drawing.Size($inner, (S 44))
+    $keyPanel.Visible = $false
+    $optionsPanel.Visible = $false
+    $inputCard.Visible = $false
+    $inputRule.Visible = $false
+    $inputLine.Visible = $false
+    $rowY += (S 52)
+  } elseif ($optionCount -gt 0) {
+    $optionsLabel.Visible = $true
+    $optionsLabel.AutoSize = $true
+    $inputCard.Visible = $true
+    $inputRule.Visible = $true
+    $inputLine.Visible = $true
     $keyPanel.Visible = $false
     $optionsPanel.Visible = $true
     $optionsPanel.Location = New-Object System.Drawing.Point($x, $rowY)
@@ -1226,6 +1247,9 @@ function Layout-Form {
   } else {
     $optionsLabel.Visible = $true
     $optionsPanel.Visible = $false
+    $inputCard.Visible = $true
+    $inputRule.Visible = $true
+    $inputLine.Visible = $true
     if ($script:Active.kind -eq "text") {
       $keyPanel.Visible = $false
       $rowY += (S 4)
@@ -1250,7 +1274,7 @@ function Layout-Form {
   $inputLine.Location = New-Object System.Drawing.Point($x, ($iY + (S 45)))
   $inputLine.Size = New-Object System.Drawing.Size($inner, 1)
 
-  $fY = $iY + (S 52)
+  $fY = if ($script:MultiQuestion) { $iY + (S 12) } else { $iY + (S 52) }
   $footerLine.Location = New-Object System.Drawing.Point(0, $fY)
   $footerLine.Size = New-Object System.Drawing.Size($w, 1)
   $shortcutLabel.Location = New-Object System.Drawing.Point($x, ($fY + (S 12)))
@@ -1719,6 +1743,7 @@ $form.add_FormClosing({
 function Show-Request($request) {
   if ($null -eq $request) { return }
   $script:Active = $request
+  $script:MultiQuestion = [bool]$request.multiQuestion
   $script:Lang = Resolve-Language ([string]$request.lang)
   $script:OpenKey = Get-OpenKey
   if ($request.options) { $script:DefaultRow = $null }
@@ -1771,7 +1796,7 @@ function Show-Request($request) {
   $form.BringToFront()
   $form.TopMost = $true
   Write-Log ("form visible={0} state={1} bounds={2} handle={3}" -f $form.Visible, $form.WindowState, $form.Bounds, $form.Handle)
-  if ($request.kind -eq "text") {
+  if ($request.kind -eq "text" -and -not $script:MultiQuestion) {
     $form.ActiveControl = $inputBox
     $inputBox.Focus()
   } else {

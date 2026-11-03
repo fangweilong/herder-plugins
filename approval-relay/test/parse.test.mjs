@@ -124,7 +124,7 @@ Enter to submit · Esc to cancel`);
 
 
 test("omp Ask panel parses radio options and Other across descriptions", () => {
-  const p = parseApproval(`╭─ Ask ─────────────────────────────────────────────╮
+  const p = parseApproval(`╭─ Ask 3 questions ─────────────────────────────────╮
 │ GitHub/GitLab 登录弹窗用哪种凭据？（GitHub 官方已不接受密码）
 ├───────────────────────────────────────────────────┤
 │ ❯ ○ Token 登录（推荐）
@@ -149,6 +149,8 @@ OpenCode Go  mo 54%`);
     "Other (type your own)",
   ]);
   assert.equal(p.options[3].other, true);
+  assert.equal(p.multiQuestion, true);
+  assert.equal(p.questionCount, 3);
 });
 
 test("numbered options are tagged as options", () => {
