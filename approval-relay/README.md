@@ -15,6 +15,7 @@
 - 等待时长每个刷新周期自动更新；
 - 编号选项带 Other/自己输入时，点 Other 会聚焦输入框，发送时先选中 Other 再送文本，输入期间不会重建弹窗；
 - 多 tab 的 Ask 表单（如 omp 的 3 questions）可在弹窗内逐题回答：上一题 / 下一题 / 提交全部；不会只提交第一题。
+- 向导只在选中 Other 时显示输入框；支持 ↑↓ 移动、Space/Enter 选择、←/→ 或 Shift+Tab/Tab 切题、Esc 收起。
 - 点击选项后调用 `hc keys` 把按键送回 agent；自由文本用 `hc send --force`；
 - 发送后自动检查 agent 是否离开 `blocked`；仍 blocked 会提示并计次；
 - 多个 agent 同时等待时排队，一次只弹一个；

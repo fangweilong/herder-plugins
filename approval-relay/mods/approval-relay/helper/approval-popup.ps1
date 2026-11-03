@@ -110,6 +110,7 @@ $script:WizardIndex = 0
 $script:WizardAnswers = @()
 $script:WizardOther = $false
 $script:WizardStarted = $false
+$script:WizardCursor = 0
 $script:LastActivity = Get-Date
 
 function Resolve-Language([string]$requestLang) {
@@ -1015,7 +1016,7 @@ function Update-WizardRows {
     if ($row -isnot [HerdrApproval.RowButton] -or $null -eq $row.Tag) { continue }
     $on = $selected -contains [int]$row.Tag.index
     $row.IsDefault = $on
-    $row.Hint = if ($on) { "✓" } else { "" }
+    $row.Hint = if ($on) { "✓" } elseif ([int]$row.Tag.index -eq $script:WizardCursor) { "›" } else { "" }
     $row.Invalidate()
   }
 }
@@ -1025,6 +1026,14 @@ function Show-Wizard {
   $q = $script:WizardQuestions[$script:WizardIndex]
   $answer = $script:WizardAnswers[$script:WizardIndex]
   $questionLabel.Text = [string]$q.question
+  $script:Active.question = [string]$q.question
+  $script:Active.options = @($q.options)
+  if (-not $script:TranslationVisible) { $translationBox.Text = "" }
+  $script:TranslationVisible = $false
+  $translationCard.Visible = $false
+  $script:WizardCursor = 0
+  $pick = @($answer.selected)
+  if ($pick.Count -gt 0) { $script:WizardCursor = [int]$pick[0] }
   Clear-Options
   $i = 0
   foreach ($option in @($q.options)) {
@@ -1040,12 +1049,14 @@ function Show-Wizard {
   Layout-Form
 }
 
-function Wizard-Select($control) {
-  if (-not $script:Wizard -or $null -eq $control.Tag) { return }
+function Select-WizardIndex([int]$index) {
+  if (-not $script:Wizard) { return }
   $q = $script:WizardQuestions[$script:WizardIndex]
   $answer = $script:WizardAnswers[$script:WizardIndex]
-  $index = [int]$control.Tag.index
-  if ($control.Tag.other) {
+  if ($index -lt 0 -or $index -ge @($q.options).Count) { return }
+  $script:WizardCursor = $index
+  $option = $q.options[$index]
+  if ([bool]$option.other) {
     $answer.selected = @($index)
     $answer.text = ""
     $script:WizardOther = $true
@@ -1066,6 +1077,19 @@ function Wizard-Select($control) {
   }
   Update-WizardRows
   Layout-Form
+}
+
+function Wizard-Select($control) {
+  if (-not $script:Wizard -or $null -eq $control.Tag) { return }
+  Select-WizardIndex ([int]$control.Tag.index)
+}
+
+function Wizard-MoveCursor([int]$delta) {
+  if (-not $script:Wizard) { return }
+  $count = @($script:WizardQuestions[$script:WizardIndex].options).Count
+  if ($count -le 0) { return }
+  $script:WizardCursor = [Math]::Max(0, [Math]::Min($count - 1, $script:WizardCursor + $delta))
+  Update-WizardRows
 }
 
 function Wizard-Prev {
@@ -1134,6 +1158,23 @@ function Finish-Wizard {
   Hide-Active
 }
 
+function Refresh-WizardScreen {
+  $result = Invoke-Hc @("read", [string]$script:Active.address, "--lines", "0", "--json")
+  if (-not $result.ok) { return }
+  try {
+    $payload = $result.output | ConvertFrom-Json
+    if ($payload.text) {
+      $script:ScreenFull = [string]$payload.text
+      $screenBox.Text = Trim-Screen $script:ScreenFull $false
+      $script:ScreenTranslated = $false
+      $script:ScreenTranslation = ""
+      $screenTransLabel.Text = ""
+      $script:TranslationVisible = $false
+      $translationCard.Visible = $false
+    }
+  } catch {}
+}
+
 function Wizard-Next {
   if (-not $script:Wizard -or $script:Busy) { return }
   $q = $script:WizardQuestions[$script:WizardIndex]
@@ -1150,6 +1191,8 @@ function Wizard-Next {
   $script:Busy = $true
   try {
     Send-WizardCurrent
+    Start-Sleep -Milliseconds 250
+    Refresh-WizardScreen
     if ($script:WizardIndex + 1 -lt $script:WizardQuestions.Count) {
       $script:WizardIndex++
       Show-Wizard
@@ -1211,7 +1254,7 @@ function Update-Texts {
   $needChip.Width = $needChip.PreferredWidth()
   $translateButton.Text = if ($script:TranslationVisible) { T "translate.hide" } else { T "translate.button" }
   $translateButton.Width = $translateButton.PreferredWidth()
-  $translateButton.Visible = -not $script:MultiQuestion -and $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
+  $translateButton.Visible = ($script:Wizard -or -not $script:MultiQuestion) -and $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
   $trKey = if ($script:Active -and [string]$script:Active.question) { "translate.questionBy" } else { "translate.by" }
   $translationHeader.Text = if ($script:TranslationProvider) { (T $trKey).Replace("{p}", $script:TranslationProvider) } else { T "translate.failed" }
   $screenTransHeader.Text = T "popup.screenTranslated"
@@ -1348,7 +1391,7 @@ function Layout-Form {
   $hasOptions = @($script:Active.options).Count -gt 0
   $qHeadLabel.Visible = $hasQuestion -or $hasOptions
   $qHeadLabel.Location = New-Object System.Drawing.Point($x, $qHeadY)
-  $translateButton.Visible = -not $script:MultiQuestion -and ($hasQuestion -or $hasOptions)
+  $translateButton.Visible = ($script:Wizard -or -not $script:MultiQuestion) -and ($hasQuestion -or $hasOptions)
   $buttonWidth = $translateButton.PreferredWidth()
   $translateButton.Location = New-Object System.Drawing.Point(($x + $inner - $buttonWidth), ($qHeadY - (S 2)))
   $translateButton.Size = New-Object System.Drawing.Size($buttonWidth, (S 24))
@@ -1468,6 +1511,19 @@ function Layout-Form {
     }
   }
 
+  $wizardInput = $true
+  if ($script:Wizard) {
+    $wizardAnswer = $script:WizardAnswers[$script:WizardIndex]
+    $wizardOptions = @($script:WizardQuestions[$script:WizardIndex].options)
+    $wizardOtherIndex = -1
+    for ($j = 0; $j -lt $wizardOptions.Count; $j++) { if ($wizardOptions[$j].other) { $wizardOtherIndex = $j } }
+    $wizardInput = (@($wizardAnswer.selected) -contains $wizardOtherIndex)
+    if (-not $wizardInput) {
+      $inputCard.Visible = $false
+      $inputRule.Visible = $false
+      $inputLine.Visible = $false
+    }
+  }
   $iY = $rowY + (S 6)
   $inputRule.Location = New-Object System.Drawing.Point($x, ($iY - (S 10)))
   $inputRule.Size = New-Object System.Drawing.Size($inner, 1)
@@ -1481,7 +1537,7 @@ function Layout-Form {
   $inputLine.Location = New-Object System.Drawing.Point($x, ($iY + (S 45)))
   $inputLine.Size = New-Object System.Drawing.Size($inner, 1)
 
-  $fY = if ($script:MultiQuestion -and -not $script:Wizard) { $iY + (S 12) } else { $iY + (S 52) }
+  $fY = if (($script:MultiQuestion -and -not $script:Wizard) -or ($script:Wizard -and -not $wizardInput)) { $iY + (S 12) } else { $iY + (S 52) }
   $footerLine.Location = New-Object System.Drawing.Point(0, $fY)
   $footerLine.Size = New-Object System.Drawing.Size($w, 1)
   $shortcutLabel.Location = New-Object System.Drawing.Point($x, ($fY + (S 12)))
@@ -1836,6 +1892,47 @@ $form.KeyPreview = $true
 $form.add_KeyDown({
   param($sender, $event)
   if ($null -eq $script:Active -or $script:Busy) { return }
+  if ($script:Wizard -and $form.ActiveControl -ne $inputBox) {
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
+      $form.Hide()
+      $event.SuppressKeyPress = $true
+      return
+    }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Up) { Wizard-MoveCursor -1; $event.SuppressKeyPress = $true; return }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Down) { Wizard-MoveCursor 1; $event.SuppressKeyPress = $true; return }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Left -or ($event.KeyCode -eq [System.Windows.Forms.Keys]::Tab -and $event.Shift)) {
+      Wizard-Prev
+      $event.SuppressKeyPress = $true
+      return
+    }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Right -or $event.KeyCode -eq [System.Windows.Forms.Keys]::Tab) {
+      Wizard-Next
+      $event.SuppressKeyPress = $true
+      return
+    }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Space) {
+      Select-WizardIndex $script:WizardCursor
+      $event.SuppressKeyPress = $true
+      return
+    }
+    if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+      $selected = @($script:WizardAnswers[$script:WizardIndex].selected)
+      if ($selected.Count -gt 0) { Wizard-Next } else { Select-WizardIndex $script:WizardCursor }
+      $event.SuppressKeyPress = $true
+      return
+    }
+    $keyChar = [string]([char]$event.KeyCode)
+    if ($keyChar -match "^[1-9]$") {
+      Select-WizardIndex ([int]$keyChar - 1)
+      $event.SuppressKeyPress = $true
+      return
+    }
+    if ($keyChar -eq "T") {
+      Translate-Current
+      $event.SuppressKeyPress = $true
+      return
+    }
+  }
   if ($form.ActiveControl -eq $inputBox -and $event.KeyCode -ne [System.Windows.Forms.Keys]::Escape) { return }
   if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
     $form.Hide()
