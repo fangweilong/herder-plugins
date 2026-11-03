@@ -1056,23 +1056,29 @@ function Select-WizardIndex([int]$index) {
   if ($index -lt 0 -or $index -ge @($q.options).Count) { return }
   $script:WizardCursor = $index
   $option = $q.options[$index]
+  $otherIndex = -1
+  for ($j = 0; $j -lt @($q.options).Count; $j++) { if ($q.options[$j].other) { $otherIndex = $j } }
   if ([bool]$option.other) {
+    # Other is exclusive: choosing it drops ordinary options.
     $answer.selected = @($index)
     $answer.text = ""
     $script:WizardOther = $true
     Set-CueBanner (T "popup.placeholderOther")
     $form.Activate()
     $inputBox.Focus()
-  } elseif ($q.multi) {
-    $selected = @($answer.selected)
-    if ($selected -contains $index) {
-      $answer.selected = @($selected | Where-Object { $_ -ne $index })
-    } else {
-      $answer.selected = @($selected + $index)
-    }
-    $script:WizardOther = $false
   } else {
-    $answer.selected = @($index)
+    # Choosing an ordinary option always cancels Other/custom text.
+    $selected = @($answer.selected | Where-Object { $_ -ne $otherIndex })
+    $answer.text = ""
+    if ($q.multi) {
+      if ($selected -contains $index) {
+        $answer.selected = @($selected | Where-Object { $_ -ne $index })
+      } else {
+        $answer.selected = @($selected + $index)
+      }
+    } else {
+      $answer.selected = @($index)
+    }
     $script:WizardOther = $false
   }
   Update-WizardRows
