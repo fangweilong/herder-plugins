@@ -102,6 +102,7 @@ $script:OptionTranslations = @{}
 $script:TranslationCache = @{}
 $script:ScreenTranslated = $false
 $script:ScreenTranslation = ""
+$script:OtherKeys = @()
 $script:LastActivity = Get-Date
 
 function Resolve-Language([string]$requestLang) {
@@ -959,7 +960,7 @@ function Add-Row($option, [int]$index) {
   $row.SecondaryFont = $fSmall
   $row.HintFont = $fSmall
   $row.BadgeFont = $fSmallStrong
-  $row.Tag = @{ keys = @($option.keys); label = $text; original = $text; index = $index }
+  $row.Tag = @{ keys = @($option.keys); label = $text; original = $text; index = $index; other = [bool]$option.other }
   $row.Height = S 44
   $row.add_Click({ param($sender, $event) Invoke-Option $sender }.GetNewClosure())
   [void]$optionsPanel.Controls.Add($row)
@@ -1000,7 +1001,8 @@ function Update-WaitLabel {
     return
   }
   $created = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$script:Active.created).UtcDateTime
-  $waitLabel.Text = TF "popup.waiting" (Format-Age ((Get-Date).ToUniversalTime() - $created).TotalSeconds)
+  $next = TF "popup.waiting" (Format-Age ((Get-Date).ToUniversalTime() - $created).TotalSeconds)
+  if ($waitLabel.Text -ne $next) { $waitLabel.Text = $next }
 }
 
 function Update-Texts {
@@ -1067,10 +1069,11 @@ foreach ($drag in @($titleLabel, $appChip, $needChip, $waitLabel)) {
 $script:ScreenFull = ""
 $script:ScreenExpanded = $false
 
-function Set-CueBanner {
+function Set-CueBanner([string]$text = "") {
   try {
     $handle = $inputBox.Handle
-    [HerdrWin]::SendMessage($handle, 0x1501, [IntPtr]::new(1), (T "popup.placeholder")) | Out-Null
+    if (-not $text) { $text = T "popup.placeholder" }
+    [HerdrWin]::SendMessage($handle, 0x1501, [IntPtr]::new(1), $text) | Out-Null
   } catch {}
 }
 
@@ -1380,6 +1383,22 @@ function Finish-Answer([string]$action, [string]$choice, $keys, [string]$text) {
 
 function Invoke-Option($control) {
   if ($script:Busy -or $null -eq $script:Active -or $null -eq $control.Tag) { return }
+  if ($control.Tag.other) {
+    $script:OtherKeys = @($control.Tag.keys)
+    foreach ($row in @($optionsPanel.Controls)) {
+      if ($row -is [HerdrApproval.RowButton]) {
+        $row.IsDefault = ($row -eq $control)
+        $row.Hint = if ($row.IsDefault) { "Enter" } else { "" }
+        $row.Invalidate()
+      }
+    }
+    $script:DefaultRow = $control
+    Set-CueBanner (T "popup.placeholderOther")
+    $form.Activate()
+    $inputBox.Focus()
+    return
+  }
+  $script:OtherKeys = @()
   $keys = @($control.Tag.keys)
   Finish-Answer "keys" ([string]$control.Tag.label) $keys "" | Out-Null
 }
@@ -1388,6 +1407,18 @@ function Send-FreeText {
   if ($script:Busy -or $null -eq $script:Active) { return }
   $value = $inputBox.Text
   if (-not $value.Trim()) { return }
+  $otherKeys = @($script:OtherKeys)
+  if ($otherKeys.Count -gt 0) {
+    $address = [string]$script:Active.address
+    $selected = Invoke-Hc (@("keys", $address) + $otherKeys)
+    if (-not $selected.ok) {
+      try { $tray.ShowBalloonTip(5000, (T "popup.failed"), ([string]$selected.error), [System.Windows.Forms.ToolTipIcon]::Error) } catch {}
+      Write-Log ("other-select failed {0} {1}" -f $address, $selected.error)
+      return
+    }
+    Start-Sleep -Milliseconds 120
+    $script:OtherKeys = @()
+  }
   Finish-Answer "text" $value @() $value | Out-Null
 }
 
@@ -1701,6 +1732,7 @@ function Show-Request($request) {
   $titleLabel.Text = $appTitle
   $script:ScreenFull = [string]$request.screen
   $script:ScreenExpanded = $false
+  $script:OtherKeys = @()
   $script:ScreenTranslated = $false
   $script:ScreenTranslation = ""
   $termTitle.Text = T "popup.screen"

@@ -25,6 +25,7 @@ const INPUT = /^\s*(?:[│┃║|]\s*)?[>❯›]\s*[▌█_|]?$|\b(type|answer|r
 const CHOICE = /^(approve|deny|allow|reject|always allow|always approve|allow once|approve once|confirm|cancel|yes|no)\b/i;
 const CHECKBOX = /^[☐☑□■]\s+/;
 const MARKER = /^[❯›▶►]\s+(.+)$/;
+const OTHER = /^(other|其他|自己输入|自定义|type something|specify|custom|输入)/i;
 const KEYED = [
   /^\[([A-Za-z])\]\s*(.+)$/,
   /^\(([A-Za-z])\)\s*(.+)$/,
@@ -101,18 +102,26 @@ function isBorder(line) {
   return /^[\s│┃║╭╮╰╯─━┄┅┈┉╌╍═╞╡├┤┬┴┼┌┐└┘|]+$/.test(line);
 }
 
-function tailIsQuiet(lines, end) {
+function tailIsQuiet(lines, end, allowInput = false) {
   // 选项下面只能有按键提示、状态栏和空行；出现新的正文说明这是一个已经结束/被打印出来的框。
+  // 带 Other 的选项允许下面跟一个自由输入行。
   for (let i = end + 1; i < lines.length; i++) {
     const line = lines[i];
     if (isBorder(line)) continue;
     const text = stripBox(line);
     if (!text) continue;
     if (HINT.test(text) || STATUS.test(text)) continue;
-    if (/^\S*[$#>❯]\s*$/.test(text)) return false;
+    if (/^\S*[$#>❯]\s*$/.test(text)) {
+      if (allowInput) continue;
+      return false;
+    }
     if (text.length > 4) return false;
   }
   return true;
+}
+
+function isOther(label) {
+  return OTHER.test(String(label).replace(/^\d{1,2}[.)、]\s*/, "").trim());
 }
 
 function questionBefore(lines, start) {
@@ -260,7 +269,10 @@ export function parseApproval(raw, options = {}) {
   const runs = numberedRuns(lines).filter((run) => run.items.length >= 2);
 
   // 取最靠近底部的一段选项；中间夹着描述行也算同一段（只保留连续编号的项）。
-  const quietRuns = runs.filter((r) => r.end >= lines.length - 20 && tailIsQuiet(lines, r.end));
+  const quietRuns = runs.filter((r) => {
+    const hasOther = r.items.some((item) => isOther(item.label));
+    return r.end >= lines.length - 20 && tailIsQuiet(lines, r.end, hasOther);
+  });
   // 多问题表单会把几个选择块叠在一起：当前块有 ❯，即使下面还有别的块也优先它。
   const markedRuns = runs.filter((r) => r.end >= lines.length - 45 && r.items.some((item) => item.marker));
   const run = (markedRuns.length ? markedRuns : quietRuns).sort((a, b) => b.end - a.end)[0];
@@ -281,6 +293,7 @@ export function parseApproval(raw, options = {}) {
         keys: codex ? [String(item.number)] : [String(item.number), "enter"],
         selected: Boolean(item.marker),
         default: index === 0,
+        other: isOther(item.label),
       })),
     };
   }

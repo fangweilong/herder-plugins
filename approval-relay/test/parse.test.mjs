@@ -107,6 +107,21 @@ Enter to submit · Esc to cancel`);
   assert.doesNotMatch(p.question, /Fake coding agent/);
 });
 
+test("numbered options with an Other input line stay options", () => {
+  const p = parseApproval(`Do you want to proceed?
+ > 1. Yes
+   2. No
+   3. Other (type your answer)
+╭──────────────────────────╮
+│ >                        │
+╰──────────────────────────╯
+Enter to submit · Esc to cancel`);
+  assert.ok(p);
+  assert.equal(p.kind, "options");
+  assert.equal(p.options.length, 3);
+  assert.equal(p.options[2].other, true);
+});
+
 test("numbered options are tagged as options", () => {
   const p = parseApproval(fake);
   assert.equal(p.kind, "options");
