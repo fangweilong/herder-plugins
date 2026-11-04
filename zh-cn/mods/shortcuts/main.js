@@ -41,7 +41,7 @@ const PAGE_NEW =
   '                    this.section === "look"\n' +
   '                      ? this.look(t, cx)\n' +
   '                      : this.section === "keys"\n' +
-  '                        ? Shortcuts(t)';
+  '                        ? Shortcuts(t, cx)';
 
 const RENDER_NEW =
   '  navKeys(t) {\n' +
@@ -97,7 +97,8 @@ const icon = `<svg
 
 // 所有锚点都在才注入；Herdr 改版后锚点缺失就原样返回，绝不写坏设置界面。
 function inject(text) {
-  if (text.includes(MARK)) return text;
+  // 已注入过的旧版本：本页现在需要 cx 才能编辑。
+  if (text.includes(MARK)) return text.replace("? Shortcuts(t)", "? Shortcuts(t, cx)");
   if (!IMPORT.test(text) || !text.includes(NAV) || !text.includes(PAGE) || !text.includes(RENDER)) return text;
   return text
     .replace(IMPORT, (line) => `${line}\nimport Shortcuts from "./shortcuts.js";`)
@@ -145,16 +146,16 @@ async function install(cx) {
   const dir = `${home}/frame/settings`;
   await fsp.mkdir(dir, { recursive: true });
   await writeIfChanged(`${dir}/shortcuts.js`, await fsp.readFile(`${mod}/shortcuts.js`, "utf8"));
+  await writeIfChanged(`${dir}/keys-edit.js`, await fsp.readFile(`${mod}/keys-edit.js`, "utf8"));
   await writeIfChanged(`${dir}/keyboard.svg`, icon);
 
   const file = `${dir}/main.js`;
   let raw = await fsp.readFile(file, "utf8").catch(() => null);
   if (raw === null) throw new Error("找不到 frame/settings/main.js");
-  if (raw.includes(MARK)) return;
 
   // 语言包（如果装了）先翻译；它写完后文件里会有中文标记，此时再注入就不会互相覆盖。
   const until = Date.now() + 4000;
-  while (!raw.includes(TRANSLATED) && Date.now() < until) {
+  while (!raw.includes(TRANSLATED) && !raw.includes(MARK) && Date.now() < until) {
     await wait(cx, 150);
     raw = await fsp.readFile(file, "utf8").catch(() => raw);
   }
@@ -163,9 +164,11 @@ async function install(cx) {
   try {
     raw = await fsp.readFile(file, "utf8");
     const text = raw.replace(/\r\n/g, "\n");
-    if (text.includes(MARK)) return;
     const next = inject(text);
-    if (next === text) throw new Error("Herdr 的设置界面结构已变化，暂时无法注入快捷键页");
+    if (next === text) {
+      if (text.includes(MARK)) return;
+      throw new Error("Herdr 的设置界面结构已变化，暂时无法注入快捷键页");
+    }
     await fsp.writeFile(file, next, "utf8");
     const back = await fsp.readFile(file, "utf8");
     if (!back.includes(MARK)) throw new Error("快捷键页写入后未生效");
