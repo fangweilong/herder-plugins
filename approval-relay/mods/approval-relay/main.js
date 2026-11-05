@@ -11,14 +11,17 @@ import * as fsp from "fs/promises";
 import { agents, appHome, exec, hc, nextCommand, notify, run, setShared, shared, theme, window } from "herdr";
 import { parseApproval, screenHash } from "./parse.js";
 
+// 只比较结构，不含勾选状态：多选时点一下就会变 selected，不该触发重建弹窗。
 function approvalSignature(parsed) {
   return JSON.stringify({
     kind: parsed.kind ?? (parsed.generic ? "text" : "options"),
     question: parsed.question ?? "",
+    multi: Boolean(parsed.multi),
+    submit: parsed.submit ?? "",
+    tabs: (parsed.tabs ?? []).map((tab) => tab.label),
     options: (parsed.options ?? []).map((option) => ({
       label: option.label,
       keys: option.keys,
-      selected: Boolean(option.selected),
       other: Boolean(option.other),
       hint: option.hint ?? "",
     })),
@@ -40,6 +43,11 @@ const DEFAULT_CONFIG = {
 
 function q(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+// POSIX shell 的单引号转义与 PowerShell 不同，不能复用 q()。
+function shq(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 function safeName(address) {
@@ -301,10 +309,28 @@ export default class ApprovalRelay extends View {
   }
 
   async ensureHelper() {
-    if (window()?.platform !== "windows") return;
+    const platform = window()?.platform;
+    if (platform !== "windows" && platform !== "darwin") return;
     if (await this.helperAlive()) return;
     if (Date.now() - this.lastLaunch < 15000) return;
     this.lastLaunch = Date.now();
+    // 优先用 Rust 自绘助手（跨平台、内存低）；没有构建产物时回退到 PowerShell helper。
+    const binary = `${this.home}/mods/approval-relay/helper/${platform === "windows" ? "approval-helper.exe" : "approval-helper"}`;
+    const hasBinary = await fsp.stat(binary).then((stat) => stat.isFile()).catch(() => false);
+    if (hasBinary) {
+      const command = platform === "windows"
+        ? `Start-Process -WindowStyle Hidden -FilePath ${q(binary)} -ArgumentList @(${q("--app-home")},${q(this.home)})`
+        : `nohup ${shq(binary)} --app-home ${shq(this.home)} >/dev/null 2>&1 &`;
+      const [shell, args] = platform === "windows"
+        ? ["powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", command]]
+        : ["/bin/sh", ["-c", command]];
+      const result = await exec(shell, args).catch((error) => ({ code: -1, stderr: String(error) }));
+      if (result?.code !== 0) {
+        notify({ title: "审批中继：弹窗助手启动失败", body: result?.stderr || result?.stdout || binary, level: "error", timeout: 12000 });
+      }
+      return;
+    }
+    if (platform !== "windows") return;
     const script = `${this.home}/mods/approval-relay/helper/approval-popup.ps1`;
     const argList = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, "-AppHome", this.home].map(q).join(",");
     const command = `Start-Process -WindowStyle Hidden -FilePath 'powershell.exe' -ArgumentList @(${argList})`;
@@ -358,7 +384,8 @@ export default class ApprovalRelay extends View {
     const live = new Set(now.map((agent) => agent.address));
     for (const [address, request] of [...this.pending]) {
       const agent = now.find((a) => a.address === address);
-      if (request.multiQuestion && live.has(address)) continue;
+      // 只有解析不出页签的旧式多问题表单才需要保活；AskUserQuestion 卡片按 blocked 正常收敛。
+      if (request.multiQuestion && !request.tabs?.length && live.has(address)) continue;
       if (live.has(address) && agent?.status === "blocked") continue;
       await this.cancelRequest(address, "external");
     }
@@ -372,7 +399,9 @@ export default class ApprovalRelay extends View {
     const attempts = this.attempts.get(address) ?? 0;
     if (attempts >= this.config.maxAttempts) return;
     if (this.config.skipFocused && agent.focused && window()?.active) return;
-    if (pending?.multiQuestion) { pending.checkedAt = Date.now(); return; }
+    // 有页签的 AskUserQuestion 卡片可以逐题切换，必须跟着屏幕重读；
+    // 只有解析不出页签的旧式多问题表单才冻结，避免反复重建。
+    if (pending?.multiQuestion && !(pending.tabs?.length)) { pending.checkedAt = Date.now(); return; }
     const due = (this.lastRead.get(address) ?? 0) + this.config.readCooldownMs;
     const checked = pending?.checkedAt ?? pending?.updatedAt ?? 0;
     if (pending && Date.now() - checked < this.config.readCooldownMs) return;
@@ -444,6 +473,10 @@ export default class ApprovalRelay extends View {
       questions: parsed.questions ?? [],
       kind: parsed.kind ?? (parsed.generic ? "text" : "options"),
       generic: Boolean(parsed.generic),
+      multi: Boolean(parsed.multi),
+      submit: parsed.submit ?? "",
+      tabs: parsed.tabs ?? [],
+      currentTab: parsed.currentTab ?? 0,
       options: parsed.options ?? [],
       screen: String(screen).slice(-8000),
       lang: this.lang,
@@ -490,6 +523,12 @@ export default class ApprovalRelay extends View {
       if (!answer) continue;
       const address = answer.address;
       const request = this.pending.get(address);
+      // 刷新：弹窗已经发过按键（勾选 / 下一题 / 提交），下一轮立刻重读屏幕换新请求。
+      if (answer.action === "refresh") {
+        this.lastRead.delete(address);
+        if (request) this.pending.set(address, { ...request, checkedAt: 0, updatedAt: 0 });
+        continue;
+      }
       if (request) await fsp.unlink(`${this.queueDir}/${request.id}.json`).catch(() => {});
       this.pending.delete(address);
       if (answer.action === "dismiss") {

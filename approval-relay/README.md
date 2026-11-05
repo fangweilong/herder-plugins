@@ -1,20 +1,23 @@
-# Herdr 审批中继（Windows）
+# Herdr 审批中继（Windows / macOS）
 
-把 Herdr App 里 agent 的 `blocked` 变成 **Windows 置顶弹窗 + 托盘**，点一下就把你的选择送回终端。
+把 Herdr App 里 agent 的 `blocked` 变成 **置顶弹窗 + 托盘**，点一下就把你的选择送回终端。
 只转发你明确点过的选项，不自动批准，不改 agent 配置。
+
+弹窗默认由 Rust 助手 CPU 自绘（softbuffer + tiny-skia + cosmic-text），实测内存约 17 MB private / 34 MB working set，只有旧 PowerShell/WinForms 助手的 1/5 左右；Windows 上没有 Rust 构建产物时自动回退到 PowerShell helper。
 
 ## 效果
 
 - 弹窗跟随 Herdr 当前主题（读 `settings.json` + `themes/<name>.json`）：圆角外框、扁平分区和分隔线，不再在卡片里套卡片；
 - agent 进入 `blocked` 时，底部右侧弹出置顶窗口：项目 / 空间 / 标签 / agent、当前问题、屏幕原文、选项按钮；
 - 托盘图标同步显示待审批数量；左键叫回弹窗，右键菜单可退出助手；
-- 界面文案支持中文 / English：`language: "auto"` 时优先看当前布局是不是 `zh*`，否则看系统语言；弹窗右上角 `中 / EN` 可即时切换；
+- 界面文案支持中文 / English：`language: "auto"` 时优先看当前布局是不是 `zh*`，否则看系统语言；切换语言用 `herdr-app do approval-relay.lang`；
 - 弹窗右上角「翻译」或按 `T`：把**问答问题/审批选项**译成当前界面语言；问答问题会从屏幕中单独提取，不再只译标题；
 - 翻译按钮跟随内容：问题标题行和终端标题行右侧都叫「翻译」；第二块在译文显示后变成「收起译文」；
 - 终端译文追加在原文下方（过滤边框和空行），不会覆盖原文；再点「收起译文」隐藏；
 - 等待时长每个刷新周期自动更新；
 - 编号选项带 Other/自己输入时，点 Other 会聚焦输入框，发送时先选中 Other 再送文本，输入期间不会重建弹窗；
 - 多 tab 的 Ask 表单（如 omp 的 3 questions）可在弹窗内逐题回答：上一题 / 下一题 / 提交全部；不会只提交第一题。
+- Claude Code 的 AskUserQuestion 表单：弹窗顶部显示各题页签名（当前题用 `●`，已完成用 `✔`）和题目正文；选项区标题标注「单选 / 多选」，多选（`[ ]` / `[✓]`）点击只切换勾选，改完点「提交」（或 Enter）才把按键送回终端并进入下一题。已选中行用主题强调色，鼠标悬浮用中性提亮，两种状态颜色不同。
 - 向导只在选中 Other 时显示输入框；支持 ↑↓ 移动、Space/Enter 选择、←/→ 或 Shift+Tab/Tab 切题、Esc 收起。
 - 点击选项后调用 `hc keys` 把按键送回 agent；自由文本用 `hc send --force`；
 - 发送后自动检查 agent 是否离开 `blocked`；仍 blocked 会提示并计次；
@@ -26,13 +29,22 @@
 
 ## 要求
 
-- Windows 10/11；
+- Windows 10/11 或 macOS 12+；
 - Herdr App（测试于 0.1.12）；
 - `hc` 和 `herdr-app` 在 PATH 中，或安装在默认位置：
   `%LOCALAPPDATA%\Programs\herdr-core\hc.exe`、`%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe`；
-- Windows PowerShell 5.1（系统自带）。
+- Rust 1.80+（只有从源码构建 helper 时需要；Windows 回退路径需要系统自带 PowerShell 5.1）。
 
 ## 安装
+
+先构建 Rust 弹窗助手（Windows / macOS 通用）：
+
+```powershell
+cd approval-relay/helper-rs
+cargo build --release
+```
+
+再安装 mod（Windows）：
 
 ```powershell
 cd approval-relay
@@ -41,15 +53,21 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 脚本会：
 
-1. 复制 `mods/approval-relay` 到 `~/.config/herdr-app/mods/`；
+1. 复制 `mods/approval-relay` 到 `~/.config/herdr-app/mods/`，有构建产物时一并复制 `helper-rs/target/release/approval-helper.exe`；
 2. 运行 `herdr-app check` 检查 mod；
 3. 移除旧版留下的 `approval-relay-panel` 侧边栏、`approval-relay-tab` 把手和对应快捷键；
 4. 在布局里放一个 0 宽的 `approval-relay-host` 节点，让检测逻辑运行但不显示任何侧边 UI；
 5. 切换一次当前布局，让 Herdr 重新加载。
 
+macOS 没有安装脚本：把 `mods/approval-relay` 复制到 `~/.config/herdr-app/mods/`，把二进制复制为 `mods/approval-relay/helper/approval-helper` 即可。
+
 弹窗助手由 mod 自动启动，不需要单独运行；也可以手动：
 
 ```powershell
+# Windows（Rust）
+mods/approval-relay/helper/approval-helper.exe --app-home "$env:USERPROFILE\.config\herdr-app"
+
+# Windows（PowerShell 回退）
 powershell -NoProfile -ExecutionPolicy Bypass -File mods/approval-relay/helper/approval-popup.ps1 -AppHome "$env:USERPROFILE\.config\herdr-app"
 ```
 
@@ -71,7 +89,7 @@ Herdr 的「设置」里新增「审批」页，排在隐私之后、快捷键�
 ## 使用
 
 - 不占用侧边栏或快捷键；有审批时弹窗自动出现。
-- 切换语言：弹窗右上角 `中 / EN`，或 `herdr-app do approval-relay.lang`；会写回 `config.json` 的 `language`。
+- 切换语言：`herdr-app do approval-relay.lang`；会写回 `config.json` 的 `language`。
 - 翻译：问题标题行「翻译」或 `T` 翻译问题和选项；终端标题行「翻译」把屏幕译文追加在原文下方，再点「收起译文」隐藏。
 - 设置：`设置 → 审批` 改启用、翻译开关和翻译服务顺序（拖动排序）。
 
@@ -121,7 +139,15 @@ approval-relay/
     parse.js                对话框解析（编号选项 / y-n / 通用按键）
     i18n.js / i18n.json     中英文案与快捷键显示
     settings-methods.js     注入到 Herdr 设置页的「审批」页方法
-    helper/approval-popup.ps1  主题化置顶窗口 + 托盘；调用 hc 回答，翻译按钮走 Google/Microsoft
+    helper/approval-popup.ps1  Windows 回退助手（PowerShell/WinForms）
+  helper-rs/                  Rust 弹窗助手（CPU 自绘，Windows/macOS）
+    src/main.rs               事件循环、排队、托盘、键盘鼠标、窗口定位
+    src/ui.rs                 布局与自绘（tiny-skia + cosmic-text）
+    src/protocol.rs           queue/answers 文件协议
+    src/hc.rs                 hc 按键 / 文本 / 读屏 / 状态
+    src/translate.rs          Google / Microsoft 翻译与缓存
+    src/theme.rs              读取 Herdr 主题配色
+    src/state.rs              配置、i18n、字体选择
   test/parse.test.mjs       解析器测试
   test/i18n.test.mjs        语言与快捷键格式测试
   install.ps1 / uninstall.ps1
@@ -139,7 +165,8 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1
 
 ## 限制
 
-- 只支持 Windows；macOS/Linux 需要换 helper。
+- 弹窗只在 `winit` 支持的平台上自绘；Windows 已实测，macOS 代码路径已实现但未实机验证，Linux 需自行补托盘（`tray-icon` 依赖已按平台裁剪）。
 - 识别不了的自定义 TUI 对话框会退回通用按键，仍可在弹窗里看原文后手动按。
 - 强依赖 `blocked` 状态：agent 不报 OSC 7501 就不会被检测到。
-- 弹窗是普通 PowerShell WinForms 窗口，不是 Windows 通知中心卡片；这样做是为了按钮和回传可靠。
+- 弹窗是 CPU 自绘的无边框窗口，不是系统通知中心卡片；这样按钮和回传最可靠，也不占 GPU/显存。
+- 选项很多、内容很长时窗口高度会限制在屏幕内，超出部分目前不可滚动。

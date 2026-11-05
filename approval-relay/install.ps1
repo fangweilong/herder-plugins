@@ -10,6 +10,13 @@ if (-not (Test-Path (Join-Path $appHome "installed.json"))) {
   throw "找不到 Herdr App 目录：$appHome（先启动一次 herdr-app）"
 }
 
+# 先让旧助手退出，避免安装期间弹出旧窗口或占用文件。
+$data = Join-Path $appHome "data/approval-relay"
+if (Test-Path $data) {
+  Set-Content -LiteralPath (Join-Path $data "stop.flag") -Value "stop" -Encoding UTF8
+  Start-Sleep -Milliseconds 1500
+}
+
 $herdr = (Get-Command herdr-app -ErrorAction SilentlyContinue).Source
 if (-not $herdr) { $herdr = Join-Path $env:LOCALAPPDATA "Programs\herdr-app\herdr-app.exe" }
 if (-not (Test-Path $herdr)) { throw "找不到 herdr-app.exe（PATH 或默认安装位置）" }
@@ -19,6 +26,16 @@ foreach ($name in @("approval-relay")) {
   New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
   if (Test-Path $target) { Remove-Item -Recurse -Force $target }
   Copy-Item -Recurse (Join-Path $here "mods/$name") $target
+  # Rust 自绘助手：有构建产物就随 mod 一起安装，main.js 会优先使用；否则回退 PowerShell helper。
+  $binary = Join-Path $here "helper-rs/target/release/approval-helper.exe"
+  if (Test-Path $binary) {
+    $helperDir = Join-Path $target "helper"
+    New-Item -ItemType Directory -Force -Path $helperDir | Out-Null
+    Copy-Item -Force $binary (Join-Path $helperDir "approval-helper.exe")
+    Write-Host "已安装 Rust 弹窗助手 approval-helper.exe"
+  } else {
+    Write-Host "未找到 helper-rs/target/release/approval-helper.exe，使用 PowerShell helper（可在 helper-rs 下运行 cargo build --release 后重装）"
+  }
   $check = & $herdr check $target 2>&1 | Out-String
   Write-Host $check.Trim()
   if ($check -notmatch "check passed") { throw "herdr-app check 未通过：$name" }
