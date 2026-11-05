@@ -149,8 +149,55 @@ OpenCode Go  mo 54%`);
     "Other (type your own)",
   ]);
   assert.equal(p.options[3].other, true);
+  assert.deepEqual(p.options.map((o) => o.hint), [
+    "弹窗粘贴 PAT，一键打开创建页。",
+    "GitHub Device Flow / GitLab OAuth。",
+    "仅对自建实例可能有效。",
+    "",
+  ]);
   assert.equal(p.multiQuestion, true);
   assert.equal(p.questionCount, 3);
+});
+
+test("numbered options keep their indented description lines", () => {
+  const p = parseApproval(`╭──────────────────────────────────────────────╮
+│ Do you want to proceed?                       │
+│ ❯ 1. Yes                                      │
+│      Run the test command                     │
+│   2. No                                       │
+│      Skip this step                           │
+│                                               │
+╰──────────────────────────────────────────────╯`);
+  assert.ok(p);
+  assert.deepEqual(p.options.map((o) => [o.label, o.hint]), [
+    ["1. Yes", "Run the test command"],
+    ["2. No", "Skip this step"],
+  ]);
+});
+
+test("multi-question sections keep their own options and hints", () => {
+  const p = parseApproval(`│ ├─── [auth] · options:2 ───
+│   Auth method?
+│   ○ Token
+│       输入 PAT 登录
+│   ○ OAuth
+│       浏览器跳转授权
+│ ├─── [trigger] · multi · options:2 ───
+│   Which triggers?
+│   ☐ 401
+│   ☐ Preflight
+│ ├─── [scope] · options:2 ───
+│   Which scope?
+│   ○ API
+│   ○ Downloads
+╰─────────────────────────────╯`);
+  assert.ok(p);
+  const auth = p.questions.find((q) => q.id === "auth");
+  assert.deepEqual(auth.options.map((o) => [o.label, o.hint ?? ""]), [
+    ["Token", "输入 PAT 登录"],
+    ["OAuth", "浏览器跳转授权"],
+    ["Other (type your own)", ""],
+  ]);
 });
 
 

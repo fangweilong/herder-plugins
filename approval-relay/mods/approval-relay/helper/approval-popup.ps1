@@ -99,6 +99,7 @@ $script:Exiting = $false
 $script:LastBeat = 0
 $script:DefaultRow = $null
 $script:OptionTranslations = @{}
+$script:HintTranslations = @{}
 $script:TranslationCache = @{}
 $script:ScreenTranslated = $false
 $script:ScreenTranslation = ""
@@ -341,6 +342,7 @@ function Update-OptionLabels {
   foreach ($control in @($optionsPanel.Controls)) {
     if ($control -isnot [HerdrApproval.RowButton] -or $null -eq $control.Tag) { continue }
     $original = [string]$control.Tag.original
+    $hint = [string]$control.Tag.hint
     if ($script:TranslationVisible -and $script:OptionTranslations.ContainsKey($original)) {
       $control.LabelText = [string]$script:OptionTranslations[$original]
       $control.SecondaryText = $original
@@ -348,6 +350,7 @@ function Update-OptionLabels {
       $control.LabelText = $original
       $control.SecondaryText = ""
     }
+    $control.DetailText = if ($script:TranslationVisible -and $script:HintTranslations.ContainsKey($hint)) { [string]$script:HintTranslations[$hint] } else { $hint }
     $control.Invalidate()
   }
 }
@@ -440,6 +443,7 @@ namespace HerdrApproval
         public string Badge = "1";
         public string LabelText = "";
         public string SecondaryText = "";
+        public string DetailText = "";
         public string Hint = "";
         public bool IsDefault = false;
         public bool Hovered = false;
@@ -488,13 +492,25 @@ namespace HerdrApproval
             int labelX = (int)(pad + badge + S(12));
             int labelRight = Width - (int)pad - hintWidth;
             bool hasSecondary = !string.IsNullOrEmpty(SecondaryText);
-            int labelHeight = hasSecondary ? (int)(Height * 0.56f) : Height;
-            TextRenderer.DrawText(g, LabelText, LabelFont, new Rectangle(labelX, 0, Math.Max(0, labelRight - labelX), labelHeight),
+            bool hasDetail = !string.IsNullOrEmpty(DetailText);
+            int lineCount = 1 + (hasSecondary ? 1 : 0) + (hasDetail ? 1 : 0);
+            int lineHeight = Math.Max(1, Height / lineCount);
+            int textLeft = Math.Max(0, labelRight - labelX);
+            int textY = 0;
+            TextRenderer.DrawText(g, LabelText, LabelFont, new Rectangle(labelX, textY, textLeft, lineHeight),
                 TextColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            textY += lineHeight;
             if (hasSecondary)
             {
                 TextRenderer.DrawText(g, SecondaryText, SecondaryFont ?? HintFont,
-                    new Rectangle(labelX, labelHeight, Math.Max(0, labelRight - labelX), Height - labelHeight),
+                    new Rectangle(labelX, textY, textLeft, lineHeight),
+                    MutedColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                textY += lineHeight;
+            }
+            if (hasDetail)
+            {
+                TextRenderer.DrawText(g, DetailText, SecondaryFont ?? HintFont,
+                    new Rectangle(labelX, textY, textLeft, Height - textY),
                     MutedColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             if (!string.IsNullOrEmpty(Hint))
@@ -962,6 +978,7 @@ function Add-Row($option, [int]$index) {
   if ($badge -match "^[a-zA-Z]$") { $badge = $badge.ToUpperInvariant() }
   $row.Badge = if ($badge -match "^[0-9A-Z]$") { $badge } else { [string]($index + 1) }
   $row.LabelText = $text
+  $row.DetailText = [string]$option.hint
   $row.IsDefault = [bool]$option.default -or [bool]$option.selected
   $row.Hint = if ($row.IsDefault) { "Enter" } else { "" }
   $row.FillColor = $ColRaised
@@ -976,7 +993,7 @@ function Add-Row($option, [int]$index) {
   $row.SecondaryFont = $fSmall
   $row.HintFont = $fSmall
   $row.BadgeFont = $fSmallStrong
-  $row.Tag = @{ keys = @($option.keys); label = $text; original = $text; index = $index; other = [bool]$option.other }
+  $row.Tag = @{ keys = @($option.keys); label = $text; original = $text; hint = [string]$option.hint; index = $index; other = [bool]$option.other }
   $row.Height = S 44
   $row.add_Click({ param($sender, $event) Invoke-Option $sender }.GetNewClosure())
   [void]$optionsPanel.Controls.Add($row)
@@ -988,6 +1005,7 @@ function Add-WizardRow($option, [int]$index) {
   $label = [string]$option.label
   $row.Badge = [string]($index + 1)
   $row.LabelText = $label
+  $row.DetailText = [string]$option.hint
   $row.IsDefault = $false
   $row.Hint = ""
   $row.FillColor = $ColRaised
@@ -1002,7 +1020,7 @@ function Add-WizardRow($option, [int]$index) {
   $row.SecondaryFont = $fSmall
   $row.HintFont = $fSmall
   $row.BadgeFont = $fSmallStrong
-  $row.Tag = @{ wizard = $true; index = $index; other = [bool]$option.other; label = $label; original = $label }
+  $row.Tag = @{ wizard = $true; index = $index; other = [bool]$option.other; label = $label; original = $label; hint = [string]$option.hint }
   $row.Height = S 44
   $row.add_Click({ param($sender, $event) Wizard-Select $sender }.GetNewClosure())
   [void]$optionsPanel.Controls.Add($row)
@@ -1488,18 +1506,20 @@ function Layout-Form {
     $keyPanel.Visible = $false
     $optionsPanel.Visible = $true
     $optionsPanel.Location = New-Object System.Drawing.Point($x, $rowY)
-    $rowHeight = if ($script:TranslationVisible) { S 58 } else { S 44 }
-    $rowStep = $rowHeight + (S 8)
-    $optionsPanel.Size = New-Object System.Drawing.Size($inner, [Math]::Max($rowHeight, ($optionCount * $rowStep)))
-    $rowWidth = $inner
-    $index = 0
+    $rowsTotal = 0
     foreach ($control in @($optionsPanel.Controls)) {
-      $control.Width = $rowWidth
-      $control.Height = $rowHeight
+      $lines = 1
+      if ($control -is [HerdrApproval.RowButton]) {
+        if ([bool]$control.SecondaryText) { $lines++ }
+        if ([bool]$control.DetailText) { $lines++ }
+      }
+      $control.Height = (S 44) + (S 16) * ($lines - 1)
+      $control.Width = $inner
       $control.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, (S 8))
-      $index++
+      $rowsTotal += $control.Height + (S 8)
     }
-    $rowY += [Math]::Max($rowHeight, ($optionCount * $rowStep))
+    $optionsPanel.Size = New-Object System.Drawing.Size($inner, [Math]::Max((S 44), $rowsTotal))
+    $rowY += [Math]::Max((S 44), $rowsTotal)
   } else {
     $optionsLabel.Visible = $true
     $optionsPanel.Visible = $false
@@ -1833,6 +1853,7 @@ function Translate-Current {
   [System.Windows.Forms.Application]::DoEvents()
   try {
     $script:OptionTranslations = @{}
+    $script:HintTranslations = @{}
     $provider = ""
     $errors = @()
     $questionResult = $null
@@ -1843,13 +1864,23 @@ function Translate-Current {
     }
     foreach ($row in $rows) {
       $original = [string]$row.Tag.original
-      if (-not $original.Trim() -or $original -notmatch "[A-Za-z]") { continue }
-      $result = Translate-Cached $original
-      if ($result.ok) {
-        $script:OptionTranslations[$original] = [string]$result.text
-        if (-not $provider) { $provider = [string]$result.provider }
+      if ($original.Trim() -and $original -match "[A-Za-z]") {
+        $result = Translate-Cached $original
+        if ($result.ok) {
+          $script:OptionTranslations[$original] = [string]$result.text
+          if (-not $provider) { $provider = [string]$result.provider }
+        } else {
+          $errors += ("option: " + [string]$result.error)
+        }
+      }
+      $hint = [string]$row.Tag.hint
+      if (-not $hint.Trim() -or $hint -notmatch "[A-Za-z]") { continue }
+      $hintResult = Translate-Cached $hint
+      if ($hintResult.ok) {
+        $script:HintTranslations[$hint] = [string]$hintResult.text
+        if (-not $provider) { $provider = [string]$hintResult.provider }
       } else {
-        $errors += ("option: " + [string]$result.error)
+        $errors += ("hint: " + [string]$hintResult.error)
       }
     }
     Write-Log ("translate ok={0} options={1} provider={2} errors={3}" -f ($null -ne $questionResult -and $questionResult.ok), $script:OptionTranslations.Count, $provider, ($errors -join " / "))
@@ -2109,6 +2140,7 @@ function Show-Request($request) {
   $script:TranslationText = ""
   $script:TranslationProvider = ""
   $script:OptionTranslations = @{}
+  $script:HintTranslations = @{}
   $script:LastActivity = Get-Date
   $script:TranslationError = $null
   $translationBox.Text = ""

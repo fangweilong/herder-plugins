@@ -73,10 +73,14 @@ function numberedRuns(lines) {
     const cleaned = isBorder(lines[i]) ? "" : stripBox(lines[i]);
     const m = cleaned.match(NUMBERED);
     if (!m) {
-      if (cur) {
-        runs.push(cur);
-        cur = null;
-      }
+      if (!cur) continue;
+      const text = stripBox(lines[i]);
+      const option = cur.items[cur.items.length - 1];
+      // 说明行：紧跟在选项下面、缩进更深，且不是边框 / 按键提示 / 状态栏。
+      if (text && !isBorder(text) && !HINT.test(text) && !STATUS.test(text) &&
+          contentIndent(lines[i]) > option.indent && attachHint(option, text)) continue;
+      runs.push(cur);
+      cur = null;
       continue;
     }
     const number = Number(m[2]);
@@ -85,6 +89,7 @@ function numberedRuns(lines) {
       marker: m[1] ?? "",
       label: stripBox(m[3]).slice(0, 200),
       line: i,
+      indent: contentIndent(lines[i]),
     };
     if (cur && number === cur.last + 1) {
       cur.items.push(item);
@@ -124,6 +129,21 @@ function tailIsQuiet(lines, end, allowInput = false) {
 
 function isOther(label) {
   return OTHER.test(String(label).replace(/^\d{1,2}[.)、]\s*/, "").trim());
+}
+
+// 选项下面的说明行：去掉框线后按前导空格判断缩进，说明通常比选项本身更缩进一级。
+function contentIndent(line) {
+  return line.replace(/^[│┃║|]+/, "").match(/^\s*/)[0].length;
+}
+
+function attachHint(row, text) {
+  if (!row) return false;
+  const value = String(text ?? "").trim();
+  if (!value || value.length > 160) return false;
+  const next = `${row.hint ? `${row.hint} ` : ""}${value}`;
+  if (next.length > 300) return false;
+  row.hint = next;
+  return true;
 }
 
 function questionBefore(lines, start) {
@@ -268,14 +288,29 @@ function sectionQuestions(lines) {
     if (!header) continue;
     const options = [];
     const prompt = [];
+    let lastOption = null;
+    let lastIndent = 0;
     for (let j = i + 1; j < lines.length; j++) {
       const text = stripBox(lines[j]);
       if (!text) continue;
-      if (/^[─━┄┅┈┉╌╍═╭╮╰╯]*\s*\[[^\]]+\]\s*·\s*(?:multi\s*·\s*)?options:/i.test(text)) break;
+      if (/^[─━┄┅┈┉╌╍═╭╮╰╯├┤┬┴┼]*\s*\[[^\]]+\]\s*·\s*(?:multi\s*·\s*)?options:/i.test(text)) break;
       if (/^[╰└]/.test(lines[j])) break;
+      if (isBorder(text)) { lastOption = null; continue; }
       const option = sectionOption(text);
-      if (option) options.push(option);
-      else if (!options.length && !isBorder(lines[j])) prompt.push(text);
+      if (option) {
+        options.push(option);
+        lastOption = option;
+        lastIndent = contentIndent(lines[j]);
+        continue;
+      }
+      if (!options.length) {
+        prompt.push(text);
+      } else if (lastOption && contentIndent(lines[j]) > lastIndent && !HINT.test(text) && !STATUS.test(text)) {
+        // 选项下面的说明行，跟着该选项一起去弹窗。
+        if (!attachHint(lastOption, text)) lastOption = null;
+      } else {
+        lastOption = null;
+      }
     }
     if (options.length) {
       if (!options.some((o) => o.other)) options.push({ label: "Other (type your own)", other: true });
@@ -302,8 +337,8 @@ function questionInBox(lines, start, boxStart) {
   return picked.join("\n").slice(-800);
 }
 
-// omp 的 Ask 面板用 ○ 单选项，每个选项下面可以跟一段说明；只取面板里的选项行，
-// 跳过说明文字，避免把长描述当成新的正文。
+// omp 的 Ask 面板用 ○ 单选项，每个选项下面可以跟一段说明；选项行照旧解析，说明行
+// 归到上一个选项的 hint，弹窗里跟着选项一起显示。
 function radioRun(lines) {
   let boxStart = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -311,12 +346,25 @@ function radioRun(lines) {
   }
   if (boxStart < 0) return null;
   const rows = [];
+  let lastRow = null;
   for (let i = boxStart + 1; i < lines.length; i++) {
     if (/^\s*[╰└]/.test(lines[i])) break;
     const text = stripBox(lines[i]);
     if (!text) continue;
+    if (isBorder(text) || /\[[^\]]+\]\s*·\s*(?:multi\s*·\s*)?options:/i.test(text)) {
+      lastRow = null;
+      continue;
+    }
     const choice = choiceLine(text);
-    if (choice && choice.marker || choice && RADIO.test(text)) rows.push({ ...choice, line: i });
+    if (choice && (choice.marker || RADIO.test(text))) {
+      const row = { ...choice, line: i, indent: contentIndent(lines[i]) };
+      rows.push(row);
+      lastRow = row;
+      continue;
+    }
+    // 说明行必须比选项更缩进，且不是按键提示/状态栏；否则视为选项段结束。
+    if (!lastRow || contentIndent(lines[i]) <= lastRow.indent || HINT.test(text) || STATUS.test(text) ||
+        !attachHint(lastRow, text)) lastRow = null;
   }
   if (rows.length < 2) return null;
   const start = rows[0].line;
@@ -348,6 +396,7 @@ function choiceOptions(run) {
       selected: row.marker,
       default: index === base,
       other: /^(other|其他|自己输入|自定义|type something|specify|custom|输入)/i.test(row.label),
+      hint: row.hint ?? "",
     });
   });
   return options.length >= 2 ? options : null;
@@ -388,6 +437,7 @@ export function parseApproval(raw, options = {}) {
         selected: Boolean(item.marker),
         default: index === 0,
         other: isOther(item.label),
+        hint: item.hint ?? "",
       })),
       questionCount,
       multiQuestion: questionCount > 1,

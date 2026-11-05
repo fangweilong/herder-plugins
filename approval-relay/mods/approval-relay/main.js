@@ -20,6 +20,7 @@ function approvalSignature(parsed) {
       keys: option.keys,
       selected: Boolean(option.selected),
       other: Boolean(option.other),
+      hint: option.hint ?? "",
     })),
   });
 }

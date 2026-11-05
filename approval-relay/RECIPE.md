@@ -7,7 +7,7 @@ Windows 上给 Herdr App 的 agent 审批加一层系统级弹窗：agent 进入
 ## What you see
 
 - **无侧边面板**：布局不挂载可见的 approval-relay 面板或浮动把手；只保留 0 宽 `approval-relay-host` 让检测逻辑运行。
-- **弹窗**：鼠标所在屏幕右下角，置顶、不占任务栏。颜色取自 Herdr 的 `settings.json` + `themes/<name>.json`（dark/light），圆角卡片、降噪的终端原文（默认 12 行，可展开）、整行选项（数字徽标 + 默认项 `Enter` 提示）、内联回复框。底部固定显示 `1–9 选择 · Enter 默认 · Esc 收起 · <快捷键> 叫出弹窗`，右侧是 `在 Herdr 打开` / `忽略`。
+- **弹窗**：鼠标所在屏幕右下角，置顶、不占任务栏。颜色取自 Herdr 的 `settings.json` + `themes/<name>.json`（dark/light），圆角卡片、降噪的终端原文（默认 12 行，可展开）、整行选项（数字徽标 + 默认项 `Enter` 提示 + 选项下方的说明行）、内联回复框。底部固定显示 `1–9 选择 · Enter 默认 · Esc 收起 · <快捷键> 叫出弹窗`，右侧是 `在 Herdr 打开` / `忽略`。
 - **托盘**：黄色警告图标表示有待审批，灰蓝应用图标表示空闲；左键叫回弹窗，右键菜单显示数量并可退出助手。不再额外弹系统气泡，避免盖住弹窗本身。
 - 语言：`language: "auto"` 先看当前布局是否 `zh*`，否则跟系统 UI 语言；弹窗右上角 `中/EN` 可即时切换。所有固定文案来自 `i18n.json`，agent 的标题/问题/屏幕保持原文。
 - 翻译：问题卡右上角「翻译」或按 `T`。先 `clients5.google.com/translate_a/t?client=dict-chrome-ex...`，失败再 `POST edge.microsoft.com/translate/translatetext`（`to=zh-Hans`）；译文卡显示「译文 · Google/Microsoft」，再次点击/`T` 收起。只发问题文本（问题为空时发最后一段屏幕），不上传完整会话。
@@ -19,6 +19,7 @@ Windows 上给 Herdr App 的 agent 审批加一层系统级弹窗：agent 进入
 - 只有 Herdr App 窗口开着时才会发现新请求；弹窗助手可以独立存活，已入队的请求在 App 退出后仍能由助手回答（它自己调用 `hc`）。
 - `blocked` 只是 agent 上报的“需要人”，可能来自普通输出。mod 会读可见屏幕，只有选项位于底部、下面只剩按键提示/状态栏时才认为是活对话框；识别不出就退回通用按键，不猜。
 - 选项解析：`❯ 1. Yes` / `> 1. Yes` / `1) Yes` 这类编号；`[y/N]`、`(y/n)`；Claude 的框线会被剥掉。编号选项发送 `编号 + Enter`，y/n 发送 `y/n + Enter`。
+- 选项说明：选项下面缩进更深的说明行归到该选项的 `hint`（omp Ask 面板、多问题分节、编号框都支持），弹窗在选项主行下方用弱化文字显示，翻译时一并翻译；`Other` 之类没有说明的选项不占位。
 - 通用按键：`Enter`、`Esc`、`↑`、`↓`、`Tab`、`1`、`2`、`3`、`Y`、`N`。数字键可直接选对应编号；`Enter` 选默认项；在自由文本框里 `Enter` 发送文本。
 - 发送后等 700ms 查一次 `hc get`：离开 `blocked` 记为完成；仍 `blocked` 记一次重试，达到 `maxAttempts` 后不再自动弹，并提示去终端看。
 - 正在看的 agent（`focused` 且 Herdr 窗口在前台）默认不弹；可在配置里关掉 `skipFocused`。
@@ -68,7 +69,7 @@ mods/approval-relay/
 - `node --test test/*.mjs`：编号框、框线、y/n、打印过的旧提示、底部之外菜单、通用按键、ANSI、hash；语言优先级、快捷键格式化、缺 key 回退全部通过。
 - 翻译：造一个英文审批请求，按 `T` 后译文卡出现且来源为 Google；屏蔽 Google 时回退 Microsoft。
 - 设置 → 审批：开关启用/翻译，按住 `⠿` 拖动服务顺序（单击不生效）；`config.json` 立即更新，mod 在 3 秒内重读，helper 下次翻译用新顺序。
-- 弹窗按 `T`：helper 先翻译 `question`，再逐个翻译 `options[].label`；翻译结果只改显示，`Tag.keys` 保留原编号，选项行主行中文、副行英文原文。
+- 弹窗按 `T`：helper 先翻译 `question`，再逐个翻译 `options[].label` 与 `options[].hint`；翻译结果只改显示，`Tag.keys` 保留原编号，选项行主行中文、副行英文原文、最下面一行说明。
 - 问答型审批：`parse.js` 在找不到编号选项时，用 `kind: "text"` 返回问题和空选项；helper 隐藏通用按键、聚焦输入框，发送走 `hc send --force`。
 - 多审批：mod 每个 agent 一个 queue 文件；helper 一次只 `Show-Request` 一个，按队列文件时间排序，标题旁显示剩余数量，当前文件消失后 tick 自动切下一个。
 - 兼容格式：编号（`1.` / `1)` / Pi 的 `1  yes`）、无编号高亮列表（oh-my-pi Approve/Approve session/Deny）、opencode Allow once/Always allow/Reject、Pi 二级深度列表；无编号项用 `up`/`down`+`enter` 相对当前高亮计算，`[a]llow` 这类热键直接用字母。
