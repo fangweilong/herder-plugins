@@ -105,6 +105,12 @@ $script:ScreenTranslated = $false
 $script:ScreenTranslation = ""
 $script:OtherKeys = @()
 $script:MultiQuestion = $false
+# AskUserQuestion 卡片：多选选项只切换勾选，提交单独发。
+$script:MultiSelect = $false
+$script:SubmitLabel = ""
+$script:Tabs = @()
+$script:CurrentTab = 0
+$script:LastTabNames = ""
 $script:Wizard = $false
 $script:WizardQuestions = @()
 $script:WizardIndex = 0
@@ -447,7 +453,8 @@ namespace HerdrApproval
         public string Hint = "";
         public bool IsDefault = false;
         public bool Hovered = false;
-        public Color FillColor, BorderColor, AccentColor, AccentText, TextColor, MutedColor, HoverColor, BadgeColor;
+        // HoverBorderColor 为空时退回 BorderColor；与选中态的 AccentColor 明确区分。
+        public Color FillColor, BorderColor, HoverBorderColor, AccentColor, AccentText, TextColor, MutedColor, HoverColor, BadgeColor;
         public Font LabelFont, SecondaryFont, HintFont, BadgeFont;
 
         public RowButton()
@@ -477,8 +484,9 @@ namespace HerdrApproval
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             var rect = new RectangleF(0, 0, Width - 1, Height - 1);
+            // 选中用主题强调色；悬浮用中性提亮 + 中性边框，两种状态一眼可分。
             var fill = IsDefault ? HerdrApproval.Paint.Blend(AccentColor, FillColor, 0.16f) : (Hovered ? HoverColor : FillColor);
-            var border = (IsDefault || Hovered) ? AccentColor : BorderColor;
+            var border = IsDefault ? AccentColor : (Hovered && !HoverBorderColor.IsEmpty ? HoverBorderColor : BorderColor);
             HerdrApproval.Paint.FillRound(g, rect, S(9), fill, border);
 
             float pad = S(12);
@@ -487,6 +495,10 @@ namespace HerdrApproval
             HerdrApproval.Paint.FillRound(g, badgeRect, S(11), IsDefault ? AccentColor : BadgeColor, Color.Transparent);
             TextRenderer.DrawText(g, Badge, BadgeFont ?? LabelFont, Rectangle.Round(badgeRect),
                 IsDefault ? AccentText : TextColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+            // 选中行是强调色底，次要文字必须跟着提亮，否则灰字压在蓝底上看不清。
+            var primaryText = IsDefault ? AccentText : TextColor;
+            var secondaryText = IsDefault ? HerdrApproval.Paint.Blend(AccentText, AccentColor, 0.22f) : MutedColor;
 
             int hintWidth = string.IsNullOrEmpty(Hint) ? 0 : TextRenderer.MeasureText(Hint, HintFont).Width + (int)S(10);
             int labelX = (int)(pad + badge + S(12));
@@ -498,26 +510,26 @@ namespace HerdrApproval
             int textLeft = Math.Max(0, labelRight - labelX);
             int textY = 0;
             TextRenderer.DrawText(g, LabelText, LabelFont, new Rectangle(labelX, textY, textLeft, lineHeight),
-                TextColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                primaryText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             textY += lineHeight;
             if (hasSecondary)
             {
                 TextRenderer.DrawText(g, SecondaryText, SecondaryFont ?? HintFont,
                     new Rectangle(labelX, textY, textLeft, lineHeight),
-                    MutedColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    secondaryText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 textY += lineHeight;
             }
             if (hasDetail)
             {
                 TextRenderer.DrawText(g, DetailText, SecondaryFont ?? HintFont,
                     new Rectangle(labelX, textY, textLeft, Height - textY),
-                    MutedColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    secondaryText, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             if (!string.IsNullOrEmpty(Hint))
             {
                 var size = TextRenderer.MeasureText(Hint, HintFont);
                 TextRenderer.DrawText(g, Hint, HintFont, new Rectangle(Width - (int)pad - size.Width, 0, size.Width, Height),
-                    MutedColor, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                    secondaryText, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
             }
         }
     }
@@ -979,8 +991,8 @@ function Add-Row($option, [int]$index) {
   $row.Badge = if ($badge -match "^[0-9A-Z]$") { $badge } else { [string]($index + 1) }
   $row.LabelText = $text
   $row.DetailText = [string]$option.hint
-  $row.IsDefault = [bool]$option.default -or [bool]$option.selected
-  $row.Hint = if ($row.IsDefault) { "Enter" } else { "" }
+  $row.IsDefault = if ($script:MultiSelect) { [bool]$option.selected } else { [bool]$option.default -or [bool]$option.selected }
+  $row.Hint = if ($script:MultiSelect) { if ($row.IsDefault) { "✓" } else { "☐" } } elseif ($row.IsDefault) { "Enter" } else { "" }
   $row.FillColor = $ColRaised
   $row.BadgeColor = $ColPopover
   $row.BorderColor = $ColBorder
@@ -988,7 +1000,9 @@ function Add-Row($option, [int]$index) {
   $row.AccentText = $ColAccentFg
   $row.TextColor = $ColFg
   $row.MutedColor = $ColMuted
-  $row.HoverColor = Paint-Blend $ColAccent $ColSurface 0.10
+  # 悬浮是中性提亮，选中才用强调色：两者颜色必须不同。
+  $row.HoverColor = Paint-Blend $ColRaised $ColFg 0.07
+  $row.HoverBorderColor = Paint-Blend $ColBorder $ColMuted 0.55
   $row.LabelFont = $fBodyStrong
   $row.SecondaryFont = $fSmall
   $row.HintFont = $fSmall
@@ -1015,7 +1029,8 @@ function Add-WizardRow($option, [int]$index) {
   $row.AccentText = $ColAccentFg
   $row.TextColor = $ColFg
   $row.MutedColor = $ColMuted
-  $row.HoverColor = Paint-Blend $ColAccent $ColSurface 0.10
+  $row.HoverColor = Paint-Blend $ColRaised $ColFg 0.07
+  $row.HoverBorderColor = Paint-Blend $ColBorder $ColMuted 0.55
   $row.LabelFont = $fBodyStrong
   $row.SecondaryFont = $fSmall
   $row.HintFont = $fSmall
@@ -1270,6 +1285,21 @@ function Update-WaitLabel {
   if ($waitLabel.Text -ne $next) { $waitLabel.Text = $next }
 }
 
+function Format-Tabs {
+  # AskUserQuestion 的页签名（header）是判断“在问哪一块”的唯一线索。
+  $labels = @($script:Tabs | ForEach-Object { [string]$_.label } | Where-Object { $_ })
+  if ($labels.Count -eq 0) { return (T "popup.questionSection") }
+  if ($labels.Count -eq 1) { return $labels[0] }
+  $parts = @()
+  for ($i = 0; $i -lt $labels.Count; $i++) {
+    $mark = if ($i -eq $script:CurrentTab) { "●" } else { "○" }
+    $parts += ("{0} {1}" -f $mark, $labels[$i])
+  }
+  $text = $parts -join "   "
+  if ($text.Length -gt 110) { $text = $text.Substring(0, 109) + "…" }
+  return $text
+}
+
 function Update-Texts {
   $form.Text = T "tray.title"
   $appChip.Caption = ""
@@ -1278,27 +1308,35 @@ function Update-Texts {
   $needChip.Width = $needChip.PreferredWidth()
   $translateButton.Text = if ($script:TranslationVisible) { T "translate.hide" } else { T "translate.button" }
   $translateButton.Width = $translateButton.PreferredWidth()
-  $translateButton.Visible = ($script:Wizard -or -not $script:MultiQuestion) -and $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
+  $translateButton.Visible = $null -ne $script:Active -and ([bool]$script:Active.question -or @($script:Active.options).Count -gt 0)
   $trKey = if ($script:Active -and [string]$script:Active.question) { "translate.questionBy" } else { "translate.by" }
   $translationHeader.Text = if ($script:TranslationProvider) { (T $trKey).Replace("{p}", $script:TranslationProvider) } else { T "translate.failed" }
   $screenTransHeader.Text = T "popup.screenTranslated"
-  $qHeadLabel.Text = T "popup.questionSection"
+  $qHeadLabel.Text = Format-Tabs
   $termTitle.Text = T "popup.screen"
   $termTranslate.Text = if ($script:ScreenTranslated) { T "translate.hide" } else { T "popup.translateScreen" }
   $termTranslate.Width = $termTranslate.PreferredWidth()
   $termToggle.Text = if ($script:ScreenExpanded) { T "popup.collapse" } else { T "popup.expand" }
   $termRefresh.Text = T "popup.refresh"
+  $modeText = if ($script:MultiSelect) { T "popup.modeMulti" } else { T "popup.modeSingle" }
   if ($script:Wizard) {
-    $optionsLabel.Text = (T "popup.wizardQuestion").Replace("{i}", [string]($script:WizardIndex + 1)).Replace("{n}", [string]$script:WizardQuestions.Count)
-  } elseif ($script:MultiQuestion) {
+    $wizardQ = $script:WizardQuestions[$script:WizardIndex]
+    $wizardMode = if ([bool]$wizardQ.multi) { T "popup.modeMulti" } else { T "popup.modeSingle" }
+    $optionsLabel.Text = (T "popup.wizardQuestion").Replace("{i}", [string]($script:WizardIndex + 1)).Replace("{n}", [string]$script:WizardQuestions.Count) + "  ·  " + $wizardMode
+  } elseif ($script:MultiQuestion -and @($script:Active.options).Count -eq 0) {
     $optionsLabel.Text = (T "popup.multiQuestion").Replace("{n}", [string]$script:Active.questionCount)
   } else {
-    $optionsLabel.Text = if (@($script:Active.options).Count -gt 0) { T "popup.choose" } elseif ($script:Active.kind -eq "text") { T "popup.answer" } else { T "popup.generic" }
+    # 选项标题直接写明单选/多选，避免点下去才发现行为不同。
+    $optionsLabel.Text = if (@($script:Active.options).Count -gt 0) { (T "popup.choose") + "  ·  " + $modeText } elseif ($script:Active.kind -eq "text") { T "popup.answer" } else { T "popup.generic" }
   }
   $wizardPrev.Visible = $script:Wizard
-  $wizardNext.Visible = $script:Wizard
+  $wizardNext.Visible = $script:Wizard -or $script:MultiSelect
   $wizardPrev.Text = T "popup.wizardPrev"
-  $wizardNext.Text = if ($script:Wizard -and $script:WizardIndex + 1 -ge $script:WizardQuestions.Count) { T "popup.wizardSubmit" } else { T "popup.wizardNext" }
+  if ($script:MultiSelect -and -not $script:Wizard) {
+    $wizardNext.Text = T "popup.submit"
+  } else {
+    $wizardNext.Text = if ($script:Wizard -and $script:WizardIndex + 1 -ge $script:WizardQuestions.Count) { T "popup.wizardSubmit" } else { T "popup.wizardNext" }
+  }
   $wizardPrev.Width = $wizardPrev.PreferredWidth()
   $wizardNext.Width = $wizardNext.PreferredWidth()
   $sendButton.Text = T "popup.send"
@@ -1309,7 +1347,9 @@ function Update-Texts {
   $ignoreButton.Width = $ignoreButton.PreferredWidth()
   if ($script:Wizard) {
     $shortcutLabel.Text = T "popup.hintWizard"
-  } elseif ($script:MultiQuestion) {
+  } elseif ($script:MultiSelect) {
+    $shortcutLabel.Text = T "popup.hintMultiSelect"
+  } elseif ($script:MultiQuestion -and @($script:Active.options).Count -eq 0) {
     $shortcutLabel.Text = T "popup.hintMulti"
   } elseif (@($script:Active.options).Count -gt 0) {
     $shortcutLabel.Text = (T "popup.hintDefaults") + "  ·  " + (T "popup.hintTranslate")
@@ -1415,7 +1455,7 @@ function Layout-Form {
   $hasOptions = @($script:Active.options).Count -gt 0
   $qHeadLabel.Visible = $hasQuestion -or $hasOptions
   $qHeadLabel.Location = New-Object System.Drawing.Point($x, $qHeadY)
-  $translateButton.Visible = ($script:Wizard -or -not $script:MultiQuestion) -and ($hasQuestion -or $hasOptions)
+  $translateButton.Visible = $hasQuestion -or $hasOptions
   $buttonWidth = $translateButton.PreferredWidth()
   $translateButton.Location = New-Object System.Drawing.Point(($x + $inner - $buttonWidth), ($qHeadY - (S 2)))
   $translateButton.Size = New-Object System.Drawing.Size($buttonWidth, (S 24))
@@ -1487,7 +1527,7 @@ function Layout-Form {
   $optionsLabel.Location = New-Object System.Drawing.Point($x, $oY)
   $rowY = $oY + (S 24)
   $optionCount = if ($script:Wizard) { @($script:WizardQuestions[$script:WizardIndex].options).Count } else { @($script:Active.options).Count }
-  if ($script:MultiQuestion -and -not $script:Wizard) {
+  if ($script:MultiQuestion -and -not $script:Wizard -and @($script:Active.options).Count -eq 0) {
     $optionsLabel.Visible = $true
     $optionsLabel.AutoSize = $false
     $optionsLabel.Size = New-Object System.Drawing.Size($inner, (S 44))
@@ -1563,12 +1603,14 @@ function Layout-Form {
   $inputLine.Location = New-Object System.Drawing.Point($x, ($iY + (S 45)))
   $inputLine.Size = New-Object System.Drawing.Size($inner, 1)
 
-  $fY = if (($script:MultiQuestion -and -not $script:Wizard) -or ($script:Wizard -and -not $wizardInput)) { $iY + (S 12) } else { $iY + (S 52) }
+  $emptyMulti = $script:MultiQuestion -and -not $script:Wizard -and @($script:Active.options).Count -eq 0
+  $fY = if ($emptyMulti -or ($script:Wizard -and -not $wizardInput)) { $iY + (S 12) } else { $iY + (S 52) }
   $footerLine.Location = New-Object System.Drawing.Point(0, $fY)
   $footerLine.Size = New-Object System.Drawing.Size($w, 1)
   $shortcutLabel.Location = New-Object System.Drawing.Point($x, ($fY + (S 12)))
   $shortcutWidth = $inner - $openButton.Width - $ignoreButton.Width - (S 24)
-  if ($script:Wizard) { $shortcutWidth -= $wizardPrev.Width + $wizardNext.Width + (S 24) }
+  if ($script:Wizard) { $shortcutWidth -= $wizardPrev.Width + (S 24) }
+  if ($script:Wizard -or $script:MultiSelect) { $shortcutWidth -= $wizardNext.Width }
   $shortcutLabel.Size = New-Object System.Drawing.Size([Math]::Max((S 120), $shortcutWidth), (S 24))
   $ignoreButton.Location = New-Object System.Drawing.Point(($x + $inner - $ignoreButton.Width), ($fY + (S 10)))
   $openButton.Location = New-Object System.Drawing.Point(($x + $inner - $ignoreButton.Width - $openButton.Width - (S 6)), ($fY + (S 10)))
@@ -1700,15 +1742,72 @@ function Finish-Answer([string]$action, [string]$choice, $keys, [string]$text) {
   }
 }
 
+function Write-Refresh {
+  # 让 mod 立刻重读屏幕：多选勾选/切题后，下一轮 1.5s 内换成新请求。
+  if ($null -eq $script:Active) { return }
+  try {
+    Write-JsonAtomic (Join-Path $AnswersDir ("{0}.refresh.json" -f $script:Active.id)) @{
+      id = $script:Active.id
+      address = $script:Active.address
+      action = "refresh"
+      at = (Get-Date).ToUniversalTime().ToString("o")
+    }
+  } catch {}
+}
+
+function Send-KeysChunked([string]$address, [string[]]$keys) {
+  # hc keys 的校验限制单次 6 个键，长序列分批发送。
+  for ($i = 0; $i -lt $keys.Count; $i += 6) {
+    $chunk = @($keys[$i..([Math]::Min($i + 5, $keys.Count - 1))])
+    if (-not (Test-Keys $chunk)) { return @{ ok = $false; error = (T "error.keys") } }
+    $result = Invoke-Hc (@("keys", $address) + $chunk)
+    if (-not $result.ok) { return $result }
+    Start-Sleep -Milliseconds 60
+  }
+  return @{ ok = $true }
+}
+
+function Submit-MultiSelect {
+  if ($script:Busy -or $null -eq $script:Active) { return }
+  $address = [string]$script:Active.address
+  if (-not (Test-Address $address)) { return }
+  $script:Busy = $true
+  $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+  try {
+    # 一路 ↓ 走到 Submit/Next 行（到底后再按 ↓ 无副作用），再回车；
+    # 不要用 Tab：多按的 Tab 会漏进下一题，可能顺手选中下一题的选项。
+    $keys = @("down") * 24 + @("enter")
+    $result = Send-KeysChunked $address $keys
+    if (-not $result.ok) { throw [Exception]::new([string]$result.error) }
+    Write-Refresh
+    $count = @($script:Tabs).Count
+    if ($count -gt 1) { $script:CurrentTab = [Math]::Min($script:CurrentTab + 1, $count - 1) }
+    Update-Texts
+  } catch {
+    Write-Log ("multi-submit error {0}" -f $_.Exception.Message)
+    try { $tray.ShowBalloonTip(5000, (T "popup.failed"), $_.Exception.Message, [System.Windows.Forms.ToolTipIcon]::Error) } catch {}
+  } finally {
+    $script:Busy = $false
+    $form.Cursor = [System.Windows.Forms.Cursors]::Default
+  }
+}
+
 function Invoke-Option($control) {
   if ($script:Busy -or $null -eq $script:Active -or $null -eq $control.Tag) { return }
   if ($control.Tag.other) {
     $script:OtherKeys = @($control.Tag.keys)
-    foreach ($row in @($optionsPanel.Controls)) {
-      if ($row -is [HerdrApproval.RowButton]) {
-        $row.IsDefault = ($row -eq $control)
-        $row.Hint = if ($row.IsDefault) { "Enter" } else { "" }
-        $row.Invalidate()
+    if ($script:MultiSelect) {
+      # 多选的 Other 不排他，保留其他已勾选项。
+      $control.IsDefault = $true
+      $control.Hint = "✓"
+      $control.Invalidate()
+    } else {
+      foreach ($row in @($optionsPanel.Controls)) {
+        if ($row -is [HerdrApproval.RowButton]) {
+          $row.IsDefault = ($row -eq $control)
+          $row.Hint = if ($row.IsDefault) { "Enter" } else { "" }
+          $row.Invalidate()
+        }
       }
     }
     $script:DefaultRow = $control
@@ -1717,8 +1816,43 @@ function Invoke-Option($control) {
     $inputBox.Focus()
     return
   }
+  if ($script:MultiSelect) {
+    # AskUserQuestion 多选：数字键只切换该项，弹窗留在原地；提交走 Submit-MultiSelect。
+    $address = [string]$script:Active.address
+    $keys = @($control.Tag.keys)
+    if (-not (Test-Keys $keys)) { return }
+    $result = Invoke-Hc (@("keys", $address) + $keys)
+    if (-not $result.ok) {
+      try { $tray.ShowBalloonTip(5000, (T "popup.failed"), ([string]$result.error), [System.Windows.Forms.ToolTipIcon]::Error) } catch {}
+      return
+    }
+    $control.IsDefault = -not [bool]$control.IsDefault
+    $control.Hint = if ($control.IsDefault) { "✓" } else { "☐" }
+    $control.Invalidate()
+    return
+  }
   $script:OtherKeys = @()
   $keys = @($control.Tag.keys)
+  # 多问题表单：单选后终端会自动进入下一题，不当作最终回答，重读屏幕换新请求。
+  if (@($script:Tabs).Count -gt 1) {
+    $address = [string]$script:Active.address
+    if (-not (Test-Address $address)) { return }
+    $script:Busy = $true
+    try {
+      $result = Invoke-Hc (@("keys", $address) + $keys)
+      if (-not $result.ok) { throw [Exception]::new([string]$result.error) }
+      Write-Refresh
+      $count = @($script:Tabs).Count
+      $script:CurrentTab = [Math]::Min($script:CurrentTab + 1, $count - 1)
+      Update-Texts
+    } catch {
+      Write-Log ("card-answer error {0}" -f $_.Exception.Message)
+      try { $tray.ShowBalloonTip(5000, (T "popup.failed"), $_.Exception.Message, [System.Windows.Forms.ToolTipIcon]::Error) } catch {}
+    } finally {
+      $script:Busy = $false
+    }
+    return
+  }
   Finish-Answer "keys" ([string]$control.Tag.label) $keys "" | Out-Null
 }
 
@@ -1908,7 +2042,9 @@ function Translate-Current {
 
 $translateButton.add_Click({ Translate-Current })
 $wizardPrev.add_Click({ Wizard-Prev })
-$wizardNext.add_Click({ Wizard-Next })
+$wizardNext.add_Click({
+  if ($script:MultiSelect -and -not $script:Wizard) { Submit-MultiSelect } else { Wizard-Next }
+})
 $termToggle.add_Click({ Toggle-Screen })
 $termTranslate.add_Click({ Translate-Screen })
 $termRefresh.add_Click({ Refresh-Screen })
@@ -1978,6 +2114,7 @@ $form.add_KeyDown({
   }
   if ($event.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
     if ($form.ActiveControl -eq $inputBox) { Send-FreeText }
+    elseif ($script:MultiSelect) { Submit-MultiSelect }
     elseif ($null -ne $script:DefaultRow) { Invoke-Option $script:DefaultRow }
     $event.SuppressKeyPress = $true
     return
@@ -2107,6 +2244,18 @@ function Show-Request($request) {
   if ($null -eq $request) { return }
   $script:Active = $request
   $script:MultiQuestion = [bool]$request.multiQuestion
+  $script:MultiSelect = [bool]$request.multi
+  $script:SubmitLabel = [string]$request.submit
+  $script:Tabs = @($request.tabs)
+  # 同一张多问题表单被替换成下一题时，沿用弹窗里维护的题号；换表单则回到解析结果。
+  $tabNames = (@($script:Tabs | ForEach-Object { [string]$_.label }) -join "|")
+  if ($tabNames -and $tabNames -eq $script:LastTabNames) {
+    if ($script:CurrentTab -ge $script:Tabs.Count) { $script:CurrentTab = [Math]::Max(0, $script:Tabs.Count - 1) }
+  } else {
+    $script:CurrentTab = 0
+    if ($null -ne $request.currentTab) { try { $script:CurrentTab = [int]$request.currentTab } catch {} }
+  }
+  $script:LastTabNames = $tabNames
   $script:Wizard = $false
   $script:WizardQuestions = @($request.questions)
   if ($script:MultiQuestion -and $script:WizardQuestions.Count -ge 2) { $script:Wizard = $true }
@@ -2185,7 +2334,7 @@ function Show-Request($request) {
     if ($null -ne $script:DefaultRow) { $script:DefaultRow.Focus() } else { $form.ActiveControl = $null }
   }
   try { [System.Media.SystemSounds]::Exclamation.Play() } catch {}
-  Write-Log ("show {0} {1} options={2} lang={3}" -f $request.id, $request.address, $options.Count, $script:Lang)
+  Write-Log ("show {0} {1} options={2} multi={3} tabs={4} lang={5}" -f $request.id, $request.address, @($request.options).Count, $script:MultiSelect, @($script:Tabs).Count, $script:Lang)
 }
 
 function Write-Heartbeat {

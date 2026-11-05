@@ -155,6 +155,7 @@ function questionBefore(lines, start) {
       .replace(/[─━┄┅┈┉╌╍═╭╮╰╯]+$/, "")
       .trim();
     if (!text) continue;
+    if (TABBAR.test(text)) continue;
     if (HINT.test(text) || STATUS.test(text)) continue;
     picked.unshift(text);
     if (QUESTION.test(text) || DIALOG.test(text)) marker = true;
@@ -325,6 +326,131 @@ function sectionQuestions(lines) {
   return questions;
 }
 
+// ---------------------------------------------------------------- Claude Code AskUserQuestion
+
+// 多问题审批的页签行：←  ☐ 功能范围  ☐ Diff 视图  ✔ Submit  →
+const TABBAR = /^\s*←(.*?)→\s*$/;
+const TAB_ITEM = /^([☐☑□■✔✓])\s*(.+)$/;
+const TAB_SUBMIT = /^(submit|next|review)$/i;
+// 多选选项：1. [ ] label / 1. [✓] label
+const ASK_CHECK = /^\[\s*([xX✓✔]?)\s*\]\s*(.+)$/;
+const ASK_NUMBERED = /^\s*(?:[❯›▶►>]\s*)?(\d{1,2})\.\s+(\S.*?)\s*$/;
+const ASK_SUBMIT = /^(submit|next|review)$/i;
+// “Chat about this” 是退出表单去对话的特殊项，不当作普通选项。
+const ASK_CHAT = /^(chat about this|聊聊这个|聊天讨论)$/i;
+const ASK_OTHER = /^(type something\.?|other|其他|自己输入|自定义)$/i;
+
+function parseTabBar(lines) {
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 24; i--) {
+    const m = stripBox(lines[i]).match(TABBAR);
+    if (!m) continue;
+    const body = m[1];
+    if (!/[☐☑□■✔✓]/.test(body)) continue;
+    const tabs = [];
+    for (const part of body.split(/\s{2,}/).map((s) => s.trim())) {
+      const item = part.match(TAB_ITEM);
+      if (!item) continue;
+      const label = item[2].trim();
+      if (!label || TAB_SUBMIT.test(label)) continue;
+      tabs.push({ label, answered: /[☑■✔✓]/.test(item[1]) });
+    }
+    if (tabs.length) return { line: i, tabs };
+  }
+  return null;
+}
+
+function parseAskCard(lines, tabBar) {
+  const rows = [];
+  let submit = "";
+  let multi = false;
+  let last = -1;
+  for (let i = tabBar.line + 1; i < lines.length; i++) {
+    const raw = lines[i];
+    const text = stripBox(raw);
+    if (!text) { if (last >= 0) break; continue; }
+    if (isBorder(raw)) { if (last >= 0) break; continue; }
+    const m = text.match(ASK_NUMBERED);
+    if (m) {
+      const number = Number(m[1]);
+      let label = m[2].trim();
+      let selected = false;
+      const check = label.match(ASK_CHECK);
+      if (check) { multi = true; selected = Boolean(check[1]); label = check[2].trim(); }
+      if (ASK_CHAT.test(label)) { last = i; continue; }
+      const other = ASK_OTHER.test(label);
+      rows.push({
+        number,
+        label: other ? "Other (type your own)" : label,
+        other,
+        selected,
+        hint: "",
+        line: i,
+        indent: contentIndent(raw),
+      });
+      last = i;
+      continue;
+    }
+    if (last >= 0 && ASK_SUBMIT.test(text)) { submit = text; last = i; continue; }
+    if (last >= 0 && contentIndent(raw) > rows[rows.length - 1].indent &&
+        !HINT.test(text) && !STATUS.test(text) && attachHint(rows[rows.length - 1], text)) {
+      last = i;
+      continue;
+    }
+    // 选项之前是页签和问题文本，跳过；选项之后遇到无法归属的行就结束。
+    if (last < 0) continue;
+    break;
+  }
+  if (rows.length < 2) return null;
+  if (rows[rows.length - 1].line < lines.length - 16) return null;
+  return { rows, submit, multi };
+}
+
+function askCardQuestion(lines, tabBar, firstLine) {
+  const picked = [];
+  for (let i = firstLine - 1; i > tabBar.line; i--) {
+    const text = stripBox(lines[i]);
+    if (!text || isBorder(text)) {
+      if (picked.length) break;
+      continue;
+    }
+    if (HINT.test(text) || STATUS.test(text)) continue;
+    picked.unshift(text);
+    if (QUESTION.test(text) || DIALOG.test(text) || ASK.test(text)) break;
+  }
+  return picked.join("\n").slice(-800);
+}
+
+function askCard(lines) {
+  const tabBar = parseTabBar(lines);
+  if (!tabBar) return null;
+  const card = parseAskCard(lines, tabBar);
+  if (!card) return null;
+  const current = tabBar.tabs.findIndex((tab) => !tab.answered);
+  const options = card.rows.map((row, index) => ({
+    id: `a${row.number}`,
+    label: row.label.slice(0, 220),
+    // 多选：数字键只切换勾选，弹窗自己维护选中状态，不自动提交。
+    keys: card.multi ? [String(row.number)] : [String(row.number), "enter"],
+    selected: row.selected,
+    default: index === 0,
+    other: row.other,
+    hint: row.hint ?? "",
+  }));
+  return {
+    kind: "options",
+    generic: false,
+    question: askCardQuestion(lines, tabBar, card.rows[0].line),
+    options,
+    multi: card.multi,
+    submit: card.submit,
+    tabs: tabBar.tabs,
+    currentTab: current < 0 ? 0 : current,
+    questionCount: tabBar.tabs.length,
+    multiQuestion: tabBar.tabs.length > 1,
+    questions: [],
+  };
+}
+
 function questionInBox(lines, start, boxStart) {
   const picked = [];
   for (let i = start - 1; i > boxStart && picked.length < 3; i--) {
@@ -411,6 +537,10 @@ export function parseApproval(raw, options = {}) {
   const questionCount = Math.max(askCount || 1, sectionCount, 1);
   const questions = sectionQuestions(lines);
 
+  // Claude Code 的 AskUserQuestion 卡片：顶部有页签行，多选选项带 [ ] 方框。
+  const card = askCard(lines);
+  if (card) return card;
+
   // 取最靠近底部的一段选项；中间夹着描述行也算同一段（只保留连续编号的项）。
   const quietRuns = runs.filter((r) => {
     const hasOther = r.items.some((item) => isOther(item.label));
@@ -426,19 +556,29 @@ export function parseApproval(raw, options = {}) {
     if (!before.marker && !selected) return null;
     // Codex 的提示是 “Press a number to choose”，数字本身即确认；再发 Enter 可能多提交一次。
     const codex = /codex/i.test(String(options.app ?? ""));
+    // 页签行被终端截断时，靠选项前的 [ ] 方框识别多选：数字键只切换，不发 Enter。
+    const multi = run.items.some((item) => ASK_CHECK.test(item.label));
     return {
       kind: "options",
       generic: false,
       question: before.text,
-      options: run.items.map((item, index) => ({
-        id: `n${item.number}`,
-        label: `${item.number}. ${item.label}`.slice(0, 220),
-        keys: codex ? [String(item.number)] : [String(item.number), "enter"],
-        selected: Boolean(item.marker),
-        default: index === 0,
-        other: isOther(item.label),
-        hint: item.hint ?? "",
-      })),
+      multi,
+      submit: "",
+      tabs: parseTabBar(lines)?.tabs ?? [],
+      currentTab: 0,
+      options: run.items.map((item, index) => {
+        const check = item.label.match(ASK_CHECK);
+        const label = check ? check[2] : item.label;
+        return {
+          id: `n${item.number}`,
+          label: `${item.number}. ${label}`.slice(0, 220),
+          keys: multi || codex ? [String(item.number)] : [String(item.number), "enter"],
+          selected: multi ? Boolean(check[1]) : Boolean(item.marker),
+          default: multi ? false : index === 0,
+          other: isOther(label),
+          hint: item.hint ?? "",
+        };
+      }),
       questionCount,
       multiQuestion: questionCount > 1,
       questions,

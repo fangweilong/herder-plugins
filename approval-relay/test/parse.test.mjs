@@ -325,6 +325,96 @@ Question 2: Which ORM?
   assert.match(p.question, /Question 1/);
 });
 
+const claudeMultiSelect = `←  ☐ 功能范围  ☐ Diff 视图  ✔ Submit  →
+
+这个 Git 插件第一版要覆盖哪些视图？（可多选）
+
+❯ 1. [ ] 提交历史 + 提交 diff（推荐）
+         浏览提交列表，查看单次提交的文件变更与 diff
+  2. [ ] 工作区变更 + 暂存/提交
+         查看未暂存/已暂存变更，执行暂存与提交
+  3. [ ] 分支 / 提交对比
+         选择两个分支或提交进行差异对比
+  4. [ ] Blame / 文件历史
+         按行查看 blame，浏览单个文件的变更历史
+  5. [ ] Type something
+     Next
+────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel`;
+
+const claudeSingleSelect = `←  ☐ 功能范围  ☐ Diff 视图  ✔ Submit  →
+
+diff 怎么显示？
+
+❯ 1. 并排双栏（推荐）
+     左右两栏对照显示旧版本与新版本
+  2. 单栏统一 diff
+     单一栏位显示 +/- 行的统一 diff
+  3. 两种可切换
+     提供切换按钮，两种模式都支持
+  4. Type something.
+────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel`;
+
+test("Claude multi-select keeps the tab headers and only toggles", () => {
+  const p = parseApproval(claudeMultiSelect);
+  assert.ok(p);
+  assert.equal(p.multi, true);
+  assert.equal(p.submit, "Next");
+  assert.deepEqual(p.tabs.map((tab) => tab.label), ["功能范围", "Diff 视图"]);
+  assert.equal(p.multiQuestion, true);
+  assert.equal(p.questionCount, 2);
+  assert.match(p.question, /哪些视图/);
+  assert.deepEqual(p.options.map((option) => option.label), [
+    "提交历史 + 提交 diff（推荐）",
+    "工作区变更 + 暂存/提交",
+    "分支 / 提交对比",
+    "Blame / 文件历史",
+    "Other (type your own)",
+  ]);
+  // 多选只发数字键切换，绝不附带 Enter。
+  assert.deepEqual(p.options.map((option) => option.keys), [["1"], ["2"], ["3"], ["4"], ["5"]]);
+  assert.equal(p.options[4].other, true);
+  assert.equal(p.options[0].hint, "浏览提交列表，查看单次提交的文件变更与 diff");
+});
+
+test("Claude single-select inside a tabbed form keeps tab names", () => {
+  const p = parseApproval(claudeSingleSelect);
+  assert.ok(p);
+  assert.equal(p.multi, false);
+  assert.equal(p.submit, "");
+  assert.deepEqual(p.tabs.map((tab) => tab.label), ["功能范围", "Diff 视图"]);
+  assert.equal(p.options.length, 4);
+  assert.deepEqual(p.options[3].keys, ["4", "enter"]);
+  assert.equal(p.options[3].other, true);
+  assert.match(p.question, /diff 怎么显示/);
+});
+
+test("Claude multi-select marked rows become selected checkboxes", () => {
+  const p = parseApproval(claudeMultiSelect.replace("❯ 1. [ ]", "  1. [✓]"));
+  assert.ok(p);
+  assert.equal(p.options[0].selected, true);
+  assert.deepEqual(p.options[0].keys, ["1"]);
+});
+
+test("multi-select checkboxes without a tab bar still only toggle", () => {
+  const p = parseApproval(`Pick some?
+❯ 1. [ ] Alpha
+  2. [ ] Beta
+  3. [ ] Gamma
+  4. [ ] Type something
+     Submit
+Enter to select`);
+  assert.ok(p);
+  assert.equal(p.multi, true);
+  assert.deepEqual(p.options.map((option) => option.keys), [["1"], ["2"], ["3"], ["4"]]);
+  assert.equal(p.options[3].other, true);
+});
+
 test("plain working screen has no approval", () => {
   assert.equal(parseApproval("Building...\n  compiled 12 files\nDone."), null);
 });
