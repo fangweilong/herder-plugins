@@ -15,6 +15,7 @@
 - 设置新增「快捷键」页：按动作合并列出 `keys.json` 的全部绑定，点击按键即可改绑、删除或
   给同一动作追加一个键（由独立的 `shortcuts` mod 提供；保存后 Herdr 实时重载，无需重启）
 - 中文布局：`zh`（主界面）、`zh-terminals`、`zh-win98`
+- 配色：附带 `solarized` 深色主题，由 `zh` 布局固定使用（不跟随系统明暗）
 
 未覆盖（这些文字由 Rust 直接绘制，mod 无法改写）：部分错误提示与更新横幅、macOS 原生菜单、
 命令面板里未单独命名的冷门命令、更新日志正文。
@@ -39,12 +40,13 @@ cd zh-cn
 
 1. 把 `mods/zh-cn` 与 `mods/shortcuts` 复制到 `~/.config/herdr-app/mods/`；
 2. 复制三个中文布局到 `~/.config/herdr-app/layouts/`；
-3. 如果 Herdr 正在运行，切换到 `zh` 布局。
+3. 把 `themes/solarized.json` 复制到 `~/.config/herdr-app/themes/`；
+4. 如果 Herdr 正在运行，切换到 `zh` 布局。
 
 切换布局后界面立即变中文；之后每次启动 Herdr 都停在中文布局。
 
-也可手动安装：复制 `mods/zh-cn`、`mods/shortcuts` 与 `layouts/zh*.json`，然后
-`herdr-app do layout.switch --name zh`。
+也可手动安装：复制 `mods/zh-cn`、`mods/shortcuts`、`layouts/zh*.json` 与
+`themes/solarized.json`，然后 `herdr-app do layout.switch --name zh`。
 
 ## 卸载
 
@@ -56,7 +58,8 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1
 ./uninstall.sh
 ```
 
-删除语言包并切回 `main`。内置 mod 与界面文件会在下次启动时恢复英文（不会留下 `*-edited` 副本）。
+删除语言包（含随包安装的 `solarized` 主题）并切回 `main`。内置 mod 与界面文件会在下次启动时
+恢复英文（不会留下 `*-edited` 副本）。
 
 ## 原理与限制
 
@@ -98,9 +101,10 @@ Herdr 每次启动都会：
 ```
 zh-cn/
   install.ps1, uninstall.ps1, install.sh, uninstall.sh
-  layouts/zh.json          主界面中文布局（main + 浮动补丁块）
+  layouts/zh.json          主界面中文布局（main + 浮动补丁块，固定 solarized 主题）
   layouts/zh-terminals.json
   layouts/zh-win98.json
+  themes/solarized.json    深色主题（由 macOS Terminal 的 111.terminal 转换）
   mods/zh-cn/
     main.js                补丁：应用规则、维护 installed.json 指纹
     patches.json           规则表（英文 → 中文）

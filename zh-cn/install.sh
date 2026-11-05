@@ -10,6 +10,8 @@ cp -R "$here/mods/zh-cn" "$home_/mods/zh-cn"
 rm -rf "$home_/mods/shortcuts"
 cp -R "$here/mods/shortcuts" "$home_/mods/shortcuts"
 cp -f "$here"/layouts/zh*.json "$home_/layouts/"
+mkdir -p "$home_/themes"
+cp -f "$here"/themes/*.json "$home_/themes/"
 if pgrep -x herdr-app >/dev/null 2>&1 || pgrep -f herdr-app >/dev/null 2>&1; then
   herdr-app do layout.switch --name zh
   echo "已安装并切换到「zh」布局。"

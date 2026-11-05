@@ -25,6 +25,15 @@ Get-ChildItem (Join-Path $here "layouts") -Filter "zh*.json" | ForEach-Object {
     Copy-Item -Force $_.FullName (Join-Path $home_ "layouts/$($_.Name)")
 }
 
+# 主题随语言包分发：zh 布局固定使用 solarized。
+$themes = Join-Path $here "themes"
+if (Test-Path $themes) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $home_ "themes") | Out-Null
+    Get-ChildItem $themes -Filter "*.json" | ForEach-Object {
+        Copy-Item -Force $_.FullName (Join-Path $home_ "themes/$($_.Name)")
+    }
+}
+
 $running = $null -ne (Get-Process herdr-app -ErrorAction SilentlyContinue)
 if ($running) {
     & herdr-app do layout.switch --name zh

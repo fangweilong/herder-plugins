@@ -10,4 +10,5 @@ rm -rf "$home_/mods/zh-cn" "$home_/mods/shortcuts"
 for n in zh zh-win98 zh-terminals; do
   rm -f "$home_/layouts/$n.json" "$home_/layouts/.state/$n.json"
 done
+rm -f "$home_/themes/solarized.json"
 echo "已卸载。内置界面会在下次启动 Herdr 时恢复为英文。"

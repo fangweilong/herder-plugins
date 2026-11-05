@@ -201,5 +201,6 @@
   "cloned_from": {
     "name": "main",
     "version": "0.1.12"
-  }
+  },
+  "theme": "solarized"
 }
