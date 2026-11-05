@@ -1,0 +1,4 @@
+# herdr-app check 会在每个含 JS 的子目录再生成一份类型定义；
+# 编辑器只需要根目录那份，子目录副本不入库。
+**/gpui-kit.d.ts
+!/gpui-kit.d.ts
