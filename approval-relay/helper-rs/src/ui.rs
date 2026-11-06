@@ -304,7 +304,7 @@ impl Ui {
         // 问题卡
         let question = self.question_text(&request);
         if !question.is_empty() {
-            let text_h = self.wrap_height(&question, sc(15.0), inner_width - sc(24.0), false);
+            let text_h = self.wrap_height(&question, sc(15.0), inner_width - sc(28.0), false);
             let card_h = (text_h + sc(20.0)).max(sc(44.0));
             fill_round(pixmap, Rect::from_xywh(sc(MARGIN), y, inner_width, card_h).unwrap(), sc(7.0), theme.popover);
             fill_round(pixmap, Rect::from_xywh(sc(MARGIN), y + sc(10.0), sc(3.0), card_h - sc(20.0)).unwrap(), sc(1.5), theme.accent);
@@ -326,10 +326,11 @@ impl Ui {
             } else {
                 self.translation_text.clone()
             };
-            let h = self.wrap_height(&text, sc(13.5), inner_width - sc(24.0), false) + sc(16.0);
-            let h = h.min(sc(150.0));
+            let text_w = inner_width - sc(24.0);
+            let text = self.fit_text(&text, sc(13.5), text_w, sc(150.0) - sc(16.0), false);
+            let h = self.wrap_height(&text, sc(13.5), text_w, false) + sc(16.0);
             fill_round(pixmap, Rect::from_xywh(sc(MARGIN), y, inner_width, h).unwrap(), sc(6.0), theme.popover);
-            self.text(pixmap, &text, sc(MARGIN + 12.0), y + sc(8.0), inner_width - sc(24.0), sc(13.5), theme.foreground, false);
+            self.text(pixmap, &text, sc(MARGIN + 12.0), y + sc(8.0), text_w, sc(13.5), theme.foreground, false);
             y += h + sc(8.0);
         }
 
@@ -369,35 +370,70 @@ impl Ui {
 
         let lines: Vec<&str> = request.screen.lines().collect();
         let line_size = sc(12.0);
-        // 与 draw_text 的 Metrics 行高一致，否则卡片高度算少、最后一行会被裁掉。
+        // 与 draw_text 的 Metrics 行高一致；实际高度还要算上长行折行后的行数。
         let line_h = line_size * 1.45;
         let max_h = if self.screen_expanded { sc(320.0) } else { sc(220.0) };
         let padding = sc(20.0);
-        let max_rows = (((max_h - padding) / line_h).floor() as usize).max(1);
-        let dropped = lines.len().saturating_sub(max_rows);
-        let (omitted, visible) = if dropped > 0 {
-            let keep = max_rows.saturating_sub(1);
-            (
-                Some(self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())])),
-                &lines[lines.len() - keep..],
-            )
+        let text_x = sc(MARGIN + 12.0);
+        let text_w = inner_width - sc(24.0);
+        let max_content_h = (max_h - padding).max(line_h);
+
+        // 从末尾往前保留能放下的行。终端内容通常看最后几行，长行会被 draw_text 折行，
+        // 所以不能用“逻辑行数”直接算卡片高度，否则文字会溢出卡片压到下面的选项上。
+        let mut lo = 0usize;
+        let mut hi = lines.len();
+        let mut keep = 0usize;
+        while lo <= hi {
+            let mid = lo + (hi - lo) / 2;
+            let body = if mid == 0 {
+                String::new()
+            } else {
+                lines[lines.len() - mid..].join("\n")
+            };
+            let body_h = self.wrapped_h(&body, line_size, text_w, true);
+            let omitted_h = if mid < lines.len() {
+                let dropped = lines.len() - mid;
+                let omitted = self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]);
+                self.wrapped_h(&omitted, line_size, text_w, true)
+            } else {
+                0.0
+            };
+            if body_h + omitted_h <= max_content_h {
+                keep = mid;
+                lo = mid + 1;
+            } else if mid == 0 {
+                break;
+            } else {
+                hi = mid - 1;
+            }
+        }
+
+        let dropped = lines.len() - keep;
+        let omitted = if dropped > 0 {
+            Some(self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]))
         } else {
-            (None, &lines[..])
+            None
         };
-        let body = visible.join("\n");
-        let rows = body.lines().count() as f32 + if omitted.is_some() { 1.0 } else { 0.0 };
-        let rows = rows.max(1.0);
-        let screen_h = (rows * line_h + padding).min(max_h);
+        let body = if keep == 0 {
+            String::new()
+        } else {
+            lines[lines.len() - keep..].join("\n")
+        };
+        let omitted_h = omitted
+            .as_ref()
+            .map(|text| self.wrapped_h(text, line_size, text_w, true))
+            .unwrap_or(0.0);
+        let body_h = self.wrapped_h(&body, line_size, text_w, true);
+        let screen_h = (body_h + omitted_h + padding).max(line_h + padding);
         let screen_rect = Rect::from_xywh(sc(MARGIN), y, inner_width, screen_h).unwrap();
         fill_round(pixmap, screen_rect, sc(8.0), theme.canvas);
         stroke_round(pixmap, screen_rect, sc(8.0), blend(theme.border, theme.muted, 0.28));
-        let text_x = sc(MARGIN + 12.0);
-        let text_w = inner_width - sc(24.0);
         let text_y = y + sc(10.0);
+        let mut body_y = text_y;
         if let Some(omitted) = &omitted {
-            self.text(pixmap, omitted, text_x, text_y, text_w, line_size, theme.dim, true);
+            self.text(pixmap, omitted, text_x, body_y, text_w, line_size, theme.dim, true);
+            body_y += omitted_h;
         }
-        let body_y = text_y + if omitted.is_some() { line_h } else { 0.0 };
         self.text(
             pixmap,
             &body,
@@ -419,9 +455,12 @@ impl Ui {
             self.text(pixmap, &header, sc(MARGIN), y, inner_width, sc(11.0), theme.accent, false);
             y += sc(18.0);
             let screen_translation = self.screen_translation.clone();
-            let h = self.wrap_height(&screen_translation, sc(13.0), inner_width - sc(24.0), false).min(sc(160.0)) + sc(14.0);
+            let text_w = inner_width - sc(24.0);
+            let screen_translation =
+                self.fit_text(&screen_translation, sc(13.0), text_w, sc(160.0) - sc(14.0), false);
+            let h = self.wrap_height(&screen_translation, sc(13.0), text_w, false) + sc(14.0);
             fill_round(pixmap, Rect::from_xywh(sc(MARGIN), y, inner_width, h).unwrap(), sc(6.0), theme.canvas);
-            self.text(pixmap, &screen_translation, sc(MARGIN + 12.0), y + sc(6.0), inner_width - sc(24.0), sc(13.0), theme.foreground, false);
+            self.text(pixmap, &screen_translation, sc(MARGIN + 12.0), y + sc(6.0), text_w, sc(13.0), theme.foreground, false);
             y += h + sc(8.0);
         }
 
@@ -457,8 +496,8 @@ impl Ui {
         let options = self.current_options();
         if !options.is_empty() {
             for (index, option) in options.iter().enumerate() {
-                self.option_row(pixmap, index, option, sc, y, inner_width, scale);
-                y += option_height(option, scale) + sc(ROW_GAP);
+                let height = self.option_row(pixmap, index, option, sc, y, inner_width);
+                y += height + sc(ROW_GAP);
             }
         } else if request.kind != "text" {
             y = self.key_caps(pixmap, y, sc, inner_width);
@@ -483,11 +522,13 @@ impl Ui {
             } else {
                 format!("{}{}", self.input, self.preedit)
             };
+            let field_w = (field.width() - sc(20.0)).max(sc(1.0));
+            let shown = self.tail_fit(&shown, sc(13.5), field_w);
             let color = if self.input.is_empty() && self.preedit.is_empty() { theme.dim } else { theme.foreground };
-            self.text(pixmap, &shown, field.left() + sc(10.0), y + sc(8.0), field.width() - sc(20.0), sc(13.5), color, false);
+            self.text(pixmap, &shown, field.left() + sc(10.0), y + sc(8.0), field_w, sc(13.5), color, false);
             if self.focus_input {
                 let measured = self.measure(&self.input.clone(), sc(13.5), false);
-                let caret_x = field.left() + sc(10.0) + measured;
+                let caret_x = (field.left() + sc(10.0) + measured).min(field.right() - sc(2.0));
                 fill_round(pixmap, Rect::from_xywh(caret_x, y + sc(8.0), sc(1.0), sc(16.0)).unwrap(), 0.0, theme.accent);
             }
             self.hits.push((field, Hit::Input));
@@ -576,10 +617,8 @@ impl Ui {
         y + sc(MARGIN)
     }
 
-    fn option_row(&mut self, pixmap: &mut Pixmap, index: usize, option: &OptionItem, sc: impl Fn(f32) -> f32, y: f32, width: f32, scale: f32) {
+    fn option_row(&mut self, pixmap: &mut Pixmap, index: usize, option: &OptionItem, sc: impl Fn(f32) -> f32, y: f32, width: f32) -> f32 {
         let theme = self.theme;
-        let height = option_height(option, scale);
-        let rect = Rect::from_xywh(sc(MARGIN), y, width, height).unwrap();
         let selected = if self.wizard.is_some() {
             self.wizard_selects(index).unwrap_or(option.is_default || option.selected)
         } else if self.current_multi() {
@@ -589,6 +628,25 @@ impl Ui {
         };
         let hovered = self.hover == Some(Hit::Option(index));
         let focused = self.hover.is_none() && self.cursor == index;
+
+        // 选项说明可能很长；先按实际换行后的高度算行高，否则文字会压到下一行。
+        let label = strip_number(&option.label);
+        let label = self.option_translations.get(&label).cloned().unwrap_or(label);
+        let hint = self
+            .hint_translations
+            .get(&option.hint)
+            .cloned()
+            .unwrap_or_else(|| option.hint.clone());
+        let has_hint = !hint.trim().is_empty();
+        let text_w = (width - sc(80.0)).max(sc(40.0));
+        let label_h = self.wrap_height(&label, sc(14.0), text_w, false);
+        let hint_h = if has_hint { self.wrap_height(&hint, sc(11.0), text_w, false) } else { 0.0 };
+        let pad = sc(8.0);
+        let gap = sc(3.0);
+        let content_h = label_h + if has_hint { gap + hint_h } else { 0.0 };
+        let height = (content_h + pad * 2.0).max(sc(42.0));
+
+        let rect = Rect::from_xywh(sc(MARGIN), y, width, height).unwrap();
         let fill = if selected {
             blend(theme.accent, theme.raised, 0.16)
         } else if hovered {
@@ -629,18 +687,11 @@ impl Ui {
 
         let primary = if selected { theme.accent_fg } else { theme.foreground };
         let secondary = if selected { blend(theme.accent_fg, theme.accent, 0.22) } else { theme.muted };
-        let label = strip_number(&option.label);
-        let label = self.option_translations.get(&label).cloned().unwrap_or(label);
-        let hint = self
-            .hint_translations
-            .get(&option.hint)
-            .cloned()
-            .unwrap_or_else(|| option.hint.clone());
-        let has_hint = !hint.trim().is_empty();
-        let label_y = if has_hint { rect.top() + sc(8.0) } else { rect.top() + (height - sc(18.0)) / 2.0 };
-        self.text(pixmap, &label, rect.left() + sc(46.0), label_y, width - sc(80.0), sc(14.0), primary, false);
+        let label_y = if has_hint { rect.top() + pad } else { rect.top() + (height - label_h) / 2.0 };
+        self.text(pixmap, &label, rect.left() + sc(46.0), label_y, text_w, sc(14.0), primary, false);
         if has_hint {
-            self.text(pixmap, &hint, rect.left() + sc(46.0), rect.top() + height - sc(22.0), width - sc(80.0), sc(11.0), secondary, false);
+            let hint_y = label_y + label_h + gap;
+            self.text(pixmap, &hint, rect.left() + sc(46.0), hint_y, text_w, sc(11.0), secondary, false);
         }
         let mark = if self.current_multi() {
             if selected { "✓".to_string() } else { "☐".to_string() }
@@ -652,6 +703,7 @@ impl Ui {
         let mw = self.measure(&mark, sc(11.0), false);
         self.text(pixmap, &mark, rect.right() - sc(12.0) - mw, rect.top() + (height - sc(16.0)) / 2.0, mw, sc(11.0), secondary, false);
         self.hits.push((rect, Hit::Option(index)));
+        height
     }
 
     fn key_caps(&mut self, pixmap: &mut Pixmap, mut y: f32, sc: impl Fn(f32) -> f32, width: f32) -> f32 {
@@ -741,6 +793,63 @@ impl Ui {
         lines * size * 1.45
     }
 
+    fn wrapped_h(&mut self, text: &str, size: f32, width: f32, mono: bool) -> f32 {
+        if text.is_empty() {
+            0.0
+        } else {
+            self.wrap_height(text, size, width, mono)
+        }
+    }
+
+    /// 把文本截到给定高度内，超出时在末尾加省略号。
+    fn fit_text(&mut self, text: &str, size: f32, width: f32, max_height: f32, mono: bool) -> String {
+        if text.is_empty() || self.wrap_height(text, size, width, mono) <= max_height {
+            return text.to_string();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut lo = 0usize;
+        let mut hi = chars.len();
+        while lo < hi {
+            let mid = lo + (hi - lo + 1) / 2;
+            let mut candidate: String = chars[..mid].iter().collect();
+            candidate.push('…');
+            if self.wrap_height(&candidate, size, width, mono) <= max_height {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        let mut out: String = chars[..lo].iter().collect();
+        out.push('…');
+        out
+    }
+
+    /// 单行输入框只显示末尾，避免长文本折行压到发送按钮。
+    fn tail_fit(&mut self, text: &str, size: f32, width: f32) -> String {
+        if text.is_empty() || width <= 1.0 || self.measure(text, size, false) <= width {
+            return text.to_string();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut lo = 0usize;
+        let mut hi = chars.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let mut candidate = String::from("…");
+            candidate.extend(chars[mid..].iter());
+            if self.measure(&candidate, size, false) <= width {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        let mut out = String::from("…");
+        out.extend(chars[lo..].iter());
+        if self.measure(&out, size, false) > width {
+            return "…".to_string();
+        }
+        out
+    }
+
     fn text(&mut self, pixmap: &mut Pixmap, text: &str, x: f32, y: f32, max_width: f32, size: f32, color: Color, mono: bool) {
         draw_text(
             pixmap,
@@ -772,10 +881,6 @@ fn mono_family() -> Family<'static> {
     {
         Family::Monospace
     }
-}
-
-fn option_height(option: &OptionItem, scale: f32) -> f32 {
-    (if option.hint.trim().is_empty() { 42.0 } else { 54.0 }) * scale
 }
 
 fn draw_text(
