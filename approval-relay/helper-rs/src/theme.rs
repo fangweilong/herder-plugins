@@ -29,7 +29,8 @@ impl Theme {
         let name = match settings.get("theme") {
             Some(Value::String(name)) => Some(name.clone()),
             Some(Value::Object(map)) => map.get(appearance).and_then(Value::as_str).map(str::to_string),
-            _ => None,
+            // Herdr 把主题记在布局里：settings.json 通常没有 theme，当前布局名在 shared.json。
+            _ => layout_theme(home),
         };
         let colors = name
             .and_then(|name| read_json(&home.join("themes").join(format!("{name}.json"))))
@@ -103,6 +104,14 @@ const DARK: Palette = Palette(
 const LIGHT: Palette = Palette(
     "#F1EDE3", "#FFFFFF", "#FBF8F0", "#EDE8DC", "#00000022", "#1F2A2E", "#5D6B70", "#8A979B", "#2F6F9E", "#FFFFFF", "#B33A3A", "#2F7D4F",
 );
+
+/// 当前布局声明的主题名：`shared.json` 的 `layout` 指向 `layouts/<布局>.json`。
+fn layout_theme(home: &Path) -> Option<String> {
+    let shared = read_json(&home.join("shared.json"))?;
+    let layout = shared.get("layout").and_then(Value::as_str)?;
+    let layout = read_json(&home.join("layouts").join(format!("{layout}.json")))?;
+    layout.get("theme").and_then(Value::as_str).map(str::to_string)
+}
 
 pub fn blend(a: Color, b: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);

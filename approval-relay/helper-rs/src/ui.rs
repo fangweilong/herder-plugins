@@ -368,19 +368,46 @@ impl Ui {
         y += sc(20.0);
 
         let lines: Vec<&str> = request.screen.lines().collect();
-        let take = if self.screen_expanded { lines.len() } else { lines.len().saturating_sub(12) };
-        let shown: String = lines
-            .iter()
-            .skip(take)
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
-        let line_size = sc(11.5);
-        let line_h = line_size * 1.35;
-        let rows = shown.lines().count().max(1) as f32;
-        let screen_h = (rows * line_h + sc(12.0)).min(if self.screen_expanded { sc(300.0) } else { sc(170.0) });
-        fill_round(pixmap, Rect::from_xywh(sc(MARGIN), y, inner_width, screen_h).unwrap(), sc(6.0), theme.canvas);
-        self.text(pixmap, &shown, sc(MARGIN + 10.0), y + sc(6.0), inner_width - sc(20.0), line_size, theme.muted, true);
+        let line_size = sc(12.0);
+        // 与 draw_text 的 Metrics 行高一致，否则卡片高度算少、最后一行会被裁掉。
+        let line_h = line_size * 1.45;
+        let max_h = if self.screen_expanded { sc(320.0) } else { sc(220.0) };
+        let padding = sc(20.0);
+        let max_rows = (((max_h - padding) / line_h).floor() as usize).max(1);
+        let dropped = lines.len().saturating_sub(max_rows);
+        let (omitted, visible) = if dropped > 0 {
+            let keep = max_rows.saturating_sub(1);
+            (
+                Some(self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())])),
+                &lines[lines.len() - keep..],
+            )
+        } else {
+            (None, &lines[..])
+        };
+        let body = visible.join("\n");
+        let rows = body.lines().count() as f32 + if omitted.is_some() { 1.0 } else { 0.0 };
+        let rows = rows.max(1.0);
+        let screen_h = (rows * line_h + padding).min(max_h);
+        let screen_rect = Rect::from_xywh(sc(MARGIN), y, inner_width, screen_h).unwrap();
+        fill_round(pixmap, screen_rect, sc(8.0), theme.canvas);
+        stroke_round(pixmap, screen_rect, sc(8.0), blend(theme.border, theme.muted, 0.28));
+        let text_x = sc(MARGIN + 12.0);
+        let text_w = inner_width - sc(24.0);
+        let text_y = y + sc(10.0);
+        if let Some(omitted) = &omitted {
+            self.text(pixmap, omitted, text_x, text_y, text_w, line_size, theme.dim, true);
+        }
+        let body_y = text_y + if omitted.is_some() { line_h } else { 0.0 };
+        self.text(
+            pixmap,
+            &body,
+            text_x,
+            body_y,
+            text_w,
+            line_size,
+            blend(theme.muted, theme.foreground, 0.22),
+            true,
+        );
         y += screen_h + sc(8.0);
 
         if self.screen_translated && !self.screen_translation.trim().is_empty() {
@@ -687,7 +714,7 @@ impl Ui {
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(size, size * 1.4));
         buffer.set_size(&mut self.font_system, None, None);
         let attrs = if mono {
-            Attrs::new().family(Family::Monospace)
+            Attrs::new().family(mono_family())
         } else {
             Attrs::new().family(Family::SansSerif)
         };
@@ -704,7 +731,7 @@ impl Ui {
         let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(size, size * 1.45));
         buffer.set_size(&mut self.font_system, Some(width), None);
         let attrs = if mono {
-            Attrs::new().family(Family::Monospace)
+            Attrs::new().family(mono_family())
         } else {
             Attrs::new().family(Family::SansSerif)
         };
@@ -730,6 +757,23 @@ impl Ui {
     }
 }
 
+// fontdb 的通用 monospace 在 Windows 上会落到 Courier New：细、带衬线，小字号发虚。
+// 显式指定平台自带的现代等宽字体，缺字时仍由 cosmic-text 的 fallback 兜底。
+fn mono_family() -> Family<'static> {
+    #[cfg(windows)]
+    {
+        Family::Name("Consolas")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Family::Name("Menlo")
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        Family::Monospace
+    }
+}
+
 fn option_height(option: &OptionItem, scale: f32) -> f32 {
     (if option.hint.trim().is_empty() { 42.0 } else { 54.0 }) * scale
 }
@@ -752,7 +796,7 @@ fn draw_text(
     let mut buffer = Buffer::new(font_system, Metrics::new(size, size * 1.45));
     buffer.set_size(font_system, Some(max_width), None);
     let attrs = if mono {
-        Attrs::new().family(Family::Monospace)
+        Attrs::new().family(mono_family())
     } else {
         Attrs::new().family(Family::SansSerif)
     };
@@ -762,13 +806,16 @@ fn draw_text(
     let width = pixmap.width() as i32;
     let height = pixmap.height() as i32;
     let data = pixmap.data_mut();
+    // 小数坐标直接截断会让字形整体偏左/偏上半个像素，取整后再落点。
+    let origin_x = x.round() as i32;
+    let origin_y = y.round() as i32;
     buffer.draw(font_system, swash, tcolor, |gx, gy, gw, gh, pixel| {
         let alpha = pixel.a();
         if alpha == 0 {
             return;
         }
-        let px = x as i32 + gx;
-        let py = y as i32 + gy;
+        let px = origin_x + gx;
+        let py = origin_y + gy;
         for row in 0..gh as i32 {
             let yy = py + row;
             if yy < 0 || yy >= height {

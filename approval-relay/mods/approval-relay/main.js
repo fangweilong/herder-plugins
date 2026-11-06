@@ -316,7 +316,8 @@ export default class ApprovalRelay extends View {
     this.lastLaunch = Date.now();
     // 优先用 Rust 自绘助手（跨平台、内存低）；没有构建产物时回退到 PowerShell helper。
     const binary = `${this.home}/mods/approval-relay/helper/${platform === "windows" ? "approval-helper.exe" : "approval-helper"}`;
-    const hasBinary = await fsp.stat(binary).then((stat) => stat.isFile()).catch(() => false);
+    // Herdr 的 fs/promises 没有 stat()，只能靠 exists() 判断构建产物是否存在。
+    const hasBinary = await fsp.exists(binary);
     if (hasBinary) {
       const command = platform === "windows"
         ? `Start-Process -WindowStyle Hidden -FilePath ${q(binary)} -ArgumentList @(${q("--app-home")},${q(this.home)})`

@@ -7,7 +7,7 @@ Windows / macOS 上给 Herdr App 的 agent 审批加一层系统级弹窗：agen
 ## What you see
 
 - **无侧边面板**：布局不挂载可见的 approval-relay 面板或浮动把手；只保留 0 宽 `approval-relay-host` 让检测逻辑运行。
-- **弹窗**：鼠标所在屏幕右下角，置顶、不占任务栏。颜色取自 Herdr 的 `settings.json` + `themes/<name>.json`（dark/light），圆角卡片、降噪的终端原文（默认 12 行，可展开）、整行选项（数字徽标 + 默认项 `Enter` 提示 + 选项下方的说明行）、内联回复框。底部固定显示 `1–9 选择 · Enter 默认 · Esc 收起 · <快捷键> 叫出弹窗`，右侧是 `在 Herdr 打开` / `忽略`。
+- **弹窗**：鼠标所在屏幕右下角，置顶、不占任务栏。颜色取自 Herdr 的 `themes/<name>.json`（主题名先看 `settings.json`，没有就按 `shared.json` 的 `layout` 读 `layouts/<布局>.json`），圆角卡片、降噪的终端原文（默认 12 行，可展开）、整行选项（数字徽标 + 默认项 `Enter` 提示 + 选项下方的说明行）、内联回复框。底部固定显示 `1–9 选择 · Enter 默认 · Esc 收起 · <快捷键> 叫出弹窗`，右侧是 `在 Herdr 打开` / `忽略`。
 - **托盘**：黄色警告图标表示有待审批，灰蓝应用图标表示空闲；左键叫回弹窗，右键菜单显示数量并可退出助手。不再额外弹系统气泡，避免盖住弹窗本身。
 - 语言：`language: "auto"` 先看当前布局是否 `zh*`，否则跟系统 UI 语言；切换用 `herdr-app do approval-relay.lang`。所有固定文案来自 `i18n.json`，agent 的标题/问题/屏幕保持原文。
 - 翻译：问题卡右上角「翻译」或按 `T`。先 `clients5.google.com/translate_a/t?client=dict-chrome-ex...`，失败再 `POST edge.microsoft.com/translate/translatetext`（`to=zh-Hans`）；译文卡显示「译文 · Google/Microsoft」，再次点击/`T` 收起。只发问题文本（问题为空时发最后一段屏幕），不上传完整会话。
@@ -72,6 +72,8 @@ PowerShell/WinForms helper 的内存主要花在 PowerShell 宿主和 WinForms/�
 ## Watch out
 
 - Rust helper 覆盖 Windows/macOS；Windows 上没有 `approval-helper.exe` 时才回退 PowerShell helper。macOS 已实现但未实机验证。
+- Herdr 不在 `settings.json` 里存主题名（默认布局由 `layouts/<布局>.json` 的 `theme` 决定，当前布局名在 `shared.json` 的 `layout`）。`Theme::load` 先读 `settings.json` 的 `theme`（字符串或 `{dark,light}`），没有再按布局回退；只读 `settings.json` 会永远落到内置 DARK，弹窗和 App 配色不一致。
+- Herdr 的 `fs/promises` 只提供 `readFile` / `writeFile` / `readdir` / `exists` / `unlink` / `rmdir` / `mkdir`，**没有 `stat` 和 `appendFile`**。`ensureHelper` 曾用 `fsp.stat` 判断构建产物，调用瞬间抛 `TypeError`，又被 `wake()` 的 `try/catch` 吞掉，表现为助手永不启动且无任何提示；判断文件是否存在只能用 `fsp.exists`。
 - 必须能从 PATH 或默认位置找到 `hc.exe` 和 `herdr-app.exe`；找不到时托盘会提示，按钮不会执行。
 - `hc send` 在 `blocked` 时默认拒绝，所以自由文本必须 `--force`；只在用户点「发送文本」时用。不要把它接到自动规则上。
 - 解析器宁可漏：普通输出里打印的 `Do you want to proceed?` 后面如果有正文，不会触发；未知 TUI 只给通用按键。
