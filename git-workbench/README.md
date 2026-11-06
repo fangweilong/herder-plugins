@@ -17,20 +17,46 @@ Herdr 自带的 `changes` 面板只有单栏 diff 和一键提交；这个 mod �
 
 ## 安装
 
+Windows（PowerShell 7 优先）：
+
 ```powershell
 cd git-workbench
+pwsh -NoProfile -File install.ps1
+```
+
+没有 `pwsh` 时用 Windows PowerShell：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-脚本会复制 mod、运行 `herdr-app check`，并把当前布局（`shared.json` 里的 `layout`）右侧「更改」面板换成这个 mod，原布局备份为 `<layout>.json.git-workbench.bak`。面板 id 仍是 `changes`，原生「更改」按钮和侧栏拖宽照常可用。卸载：
+macOS / Linux：
+
+```sh
+cd git-workbench
+./install.sh
+```
+
+需要 `python3`（用于安全改写布局和 `keys.json`），以及 `herdr-app` 在 `PATH` 中或设置
+`HERDR_APP_BIN`。
+
+脚本会复制 mod、运行 `herdr-app check`，并把当前布局（`shared.json` 里的 `layout`）右侧「更改」面板换成这个 mod，原布局备份为 `<layout>.json.git-workbench.bak`。面板 id 仍是 `changes`，原生「更改」按钮和侧栏拖宽照常可用。
+
+卸载：
 
 ```powershell
+# Windows
 powershell -ExecutionPolicy Bypass -File uninstall.ps1
 ```
 
-卸载会把「更改」面板换回原生 mod。开发时用 `dev.ps1`：同步 mod、check，并接入「更改」面板，不改 `keys.json`。
+```sh
+# macOS / Linux
+./uninstall.sh
+```
 
-> 重新安装语言包（zh-cn）可能覆盖布局文件；覆盖后重新跑一次 `install.ps1` / `dev.ps1` 即可。
+卸载会把「更改」面板换回原生 mod。开发时用 `dev.ps1`（Windows）：同步 mod、check，并接入「更改」面板，不改 `keys.json`。
+
+> 重新安装语言包（zh-cn）可能覆盖布局文件；覆盖后重新跑一次对应平台的安装脚本（或 `dev.ps1`）即可。
 
 ## 使用
 
@@ -55,7 +81,8 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1
 ```
 git-workbench/
   mod.json                place: none；由布局把「更改」面板指向本 mod
-  layout-panel.ps1        把活动布局的 changes 面板换成/换回本 mod
+  layout-panel.ps1        把活动布局的 changes 面板换成/换回本 mod（Windows）
+  layout-panel.py         同上（macOS / Linux，安装脚本调用）
   main.js                 仓库定位、视图切换、自适应分栏、命令、确认框、状态栏
   git.js                  exec 封装；log/status/branches/blame/diff 查询与写操作
   git-parse.js            纯解析函数（node --test 覆盖）
@@ -70,6 +97,7 @@ git-workbench/
   views/diff-view.js      固定行高虚拟列表渲染并排 diff；主区域单栏行渲染
   test/*.test.mjs         node --test
   dev.ps1 / install.ps1 / uninstall.ps1
+  install.sh / uninstall.sh  macOS / Linux 安装/卸载
 ```
 
 - 所有读操作带 `--no-optional-locks -c core.fsmonitor=false -c diff.autoRefreshIndex=false`，避免刷新本身写入 `.git` 又触发文件夹监听。

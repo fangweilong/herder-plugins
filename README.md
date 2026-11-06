@@ -125,3 +125,12 @@ zh-cn/
 2. 把新版文件复制到 `orig/`（保留路径），在 `reference/` 里同步翻译差异；
 3. 运行 `python tools/make-patches.py`（脚本会回放校验：规则必须逐字还原 `reference/`）；
 4. 对 `reference/` 下每个 mod/frame 运行 `herdr-app check`，再安装。
+
+## 许可
+
+本仓库中非第三方来源的部分按 MIT License 授权，见 [`LICENSE`](LICENSE)。
+
+`zh-cn` 的界面文件来自 [herdrdev/herdr-app](https://github.com/herdrdev/herdr-app)（Apache License 2.0）；
+`files-plus` 的文件树与只读预览逻辑同样来自 herdr-app（Apache 2.0），其 `uri.js` 的 VS Code URI
+处理取自 [CacaoRick/herdr-open-vscode](https://github.com/CacaoRick/herdr-open-vscode)（MIT）。
+第三方部分仍按各自许可证授权，详见 [`NOTICE`](NOTICE)。

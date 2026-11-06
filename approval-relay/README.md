@@ -29,37 +29,65 @@
 
 ## 要求
 
-- Windows 10/11 或 macOS 12+；
+- Windows 10/11 或 macOS 12+；Linux 的弹窗助手尚未支持（install.sh 会直接报错退出）；
 - Herdr App（测试于 0.1.12）；
 - `hc` 和 `herdr-app` 在 PATH 中，或安装在默认位置：
   `%LOCALAPPDATA%\Programs\herdr-core\hc.exe`、`%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe`；
-- Rust 1.80+（只有从源码构建 helper 时需要；Windows 回退路径需要系统自带 PowerShell 5.1）。
+- Rust 1.80+（只有从源码构建 helper 时需要；Windows 回退路径需要系统自带 PowerShell 5.1）；
+- macOS 安装脚本需要 `python3`（用于安全改写布局和 `keys.json`）；`herdr-app` 优先从 `PATH`
+  或 `HERDR_APP_BIN` 查找，也会尝试 `/Applications/Herdr.app/Contents/MacOS/herdr-app`。
 
 ## 安装
 
-先构建 Rust 弹窗助手（Windows / macOS 通用）：
+先构建 Rust 弹窗助手（Windows / macOS 通用）。
+
+Windows：
 
 ```powershell
 cd approval-relay/helper-rs
 cargo build --release
 ```
 
-再安装 mod（Windows）：
+macOS：
+
+```sh
+cd approval-relay/helper-rs
+cargo build --release
+```
+
+再安装 mod。
+
+Windows：
 
 ```powershell
 cd approval-relay
+pwsh -NoProfile -File install.ps1
+```
+
+没有 `pwsh` 时用 Windows PowerShell：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+macOS：
+
+```sh
+cd approval-relay
+./install.sh
 ```
 
 脚本会：
 
-1. 复制 `mods/approval-relay` 到 `~/.config/herdr-app/mods/`，有构建产物时一并复制 `helper-rs/target/release/approval-helper.exe`；
+1. 复制 `mods/approval-relay` 到 `~/.config/herdr-app/mods/`，有构建产物时一并复制助手
+   （Windows 为 `approval-helper.exe`，macOS 为 `approval-helper`）；
 2. 运行 `herdr-app check` 检查 mod；
 3. 移除旧版留下的 `approval-relay-panel` 侧边栏、`approval-relay-tab` 把手和对应快捷键；
 4. 在布局里放一个 0 宽的 `approval-relay-host` 节点，让检测逻辑运行但不显示任何侧边 UI；
 5. 切换一次当前布局，让 Herdr 重新加载。
 
-macOS 没有安装脚本：把 `mods/approval-relay` 复制到 `~/.config/herdr-app/mods/`，把二进制复制为 `mods/approval-relay/helper/approval-helper` 即可。
+macOS 没有 PowerShell 回退，找不到助手时安装脚本会报错退出；先完成 `cargo build --release`。
+找不到新构建产物时会沿用已安装的 `helper/approval-helper`。
 
 弹窗助手由 mod 自动启动，不需要单独运行；也可以手动：
 
@@ -69,6 +97,11 @@ mods/approval-relay/helper/approval-helper.exe --app-home "$env:USERPROFILE\.con
 
 # Windows（PowerShell 回退）
 powershell -NoProfile -ExecutionPolicy Bypass -File mods/approval-relay/helper/approval-popup.ps1 -AppHome "$env:USERPROFILE\.config\herdr-app"
+```
+
+```sh
+# macOS
+mods/approval-relay/helper/approval-helper --app-home "$HOME/.config/herdr-app"
 ```
 
 ## 设置
@@ -150,18 +183,29 @@ approval-relay/
     src/state.rs              配置、i18n、字体选择
   test/parse.test.mjs       解析器测试
   test/i18n.test.mjs        语言与快捷键格式测试
-  install.ps1 / uninstall.ps1
+  layout.py                 macOS 安装脚本的布局改写助手
+  install.ps1 / uninstall.ps1  Windows 安装/卸载
+  install.sh / uninstall.sh    macOS 安装/卸载（Linux 安装会报错）
 ```
 
 数据目录：`~/.config/herdr-app/data/approval-relay/`（queue / answers / audit.jsonl / helper.log）。
 
 ## 卸载
 
+Windows：
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File uninstall.ps1
 ```
 
-删除 mod 和快捷键绑定，向助手写 `stop.flag` 让它退出；加 `-Purge` 同时删除审计和队列数据。
+macOS：
+
+```sh
+./uninstall.sh
+```
+
+删除 mod 和快捷键绑定，向助手写 `stop.flag` 让它退出；加 `-Purge`（Windows）或
+`--purge`（macOS）同时删除审计和队列数据。
 
 ## 限制
 

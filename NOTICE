@@ -1,7 +1,15 @@
 Herdr 中文语言包
 
+本仓库中非第三方来源的部分按 MIT License 授权，见 LICENSE；下列第三方文件仍按各自许可证授权，
+MIT 许可不改变这些文件的授权条件。
+
 界面文件（zh-cn/reference/ 与 zh-cn/orig/ 下的 frame/ 与 mods/）来自 herdrdev/herdr-app，
 Copyright The Herdr authors，依 Apache License 2.0 授权：
 https://github.com/herdrdev/herdr-app
 
 这些文件经过翻译与少量中文化改动；规则表 patches.json 由两者生成，改动部分同样以 Apache License 2.0 提供。
+
+files-plus 的文件树与只读预览逻辑来自 herdrdev/herdr-app 的 defaults/mods/files，
+同样依 Apache License 2.0 授权；其 uri.js 的 VS Code URI 处理取自
+CacaoRick/herdr-open-vscode，依 MIT 授权：
+https://github.com/CacaoRick/herdr-open-vscode

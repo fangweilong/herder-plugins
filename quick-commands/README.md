@@ -13,10 +13,28 @@
 
 ## 安装
 
+Windows（PowerShell 7 优先）：
+
 ```powershell
 cd quick-commands
+pwsh -NoProfile -File install.ps1
+```
+
+没有 `pwsh` 时用 Windows PowerShell：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
+
+macOS / Linux：
+
+```sh
+cd quick-commands
+./install.sh
+```
+
+需要 `python3`（用于安全改写 `keys.json`），以及 `herdr-app` 在 `PATH` 中或设置
+`HERDR_APP_BIN`。
 
 脚本会：
 
@@ -35,6 +53,22 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```powershell
 herdr-app do mod.open --name quick-commands
 ```
+
+## 卸载
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File uninstall.ps1
+```
+
+macOS / Linux：
+
+```sh
+./uninstall.sh
+```
+
+加 `--purge`（Windows 为 `-Purge`）会同时删除 `data/quick-commands` 里的命令模板。
 
 ## 使用
 
@@ -132,7 +166,8 @@ quick-commands/
   project.js              按项目事实生成模板、排序（纯函数）
   test/commands.test.mjs  配置与变量测试
   test/project.test.mjs   项目检测与模板生成测试
-  install.ps1 / uninstall.ps1
+  install.ps1 / uninstall.ps1  Windows 安装/卸载
+  install.sh / uninstall.sh    macOS / Linux 安装/卸载
 ```
 
 ## 测试

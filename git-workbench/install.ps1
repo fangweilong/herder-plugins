@@ -19,7 +19,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
 if (Test-Path $target) { Remove-Item -Recurse -Force $target }
 Copy-Item -Recurse $here $target
 # 运行时生成的类型文件与开发文件不随包安装。
-foreach ($name in @("gpui-kit.d.ts", "jsconfig.json", "test", "dev.ps1", "install.ps1", "uninstall.ps1", "layout-panel.ps1", "README.md")) {
+foreach ($name in @("gpui-kit.d.ts", "jsconfig.json", "test", "dev.ps1", "install.ps1", "uninstall.ps1", "install.sh", "uninstall.sh", "layout-panel.ps1", "layout-panel.py", "README.md", "AGENTS.md")) {
   $path = Join-Path $target $name
   if (Test-Path $path) { Remove-Item -Recurse -Force $path }
 }
