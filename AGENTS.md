@@ -111,7 +111,7 @@ sh files-plus/uninstall.sh
 
 ## 其他插件
 
-`git-workbench`、`quick-commands`、`approval-relay` 都有 Windows PowerShell 和 POSIX shell
+`git-workbench`、`quick-commands` 都有 Windows PowerShell 和 POSIX shell
 安装器。Windows 没有 `pwsh` 时，把 `pwsh -NoProfile -File` 换成
 `powershell -ExecutionPolicy Bypass -File`。POSIX 脚本需要 `python3`（或可用的 `python`）来安全
 改写 `keys.json` / 布局；`herdr-app` 优先从 `PATH` 或 `HERDR_APP_BIN` 查找，macOS 还会尝试
@@ -166,39 +166,6 @@ powershell -ExecutionPolicy Bypass -File quick-commands/uninstall.ps1
 
 ```sh
 sh quick-commands/uninstall.sh          # 加 --purge 删除命令模板
-```
-
-### approval-relay
-
-先构建 Rust 助手：
-
-```sh
-cd approval-relay/helper-rs
-cargo build --release
-```
-
-Windows：
-
-```powershell
-pwsh -NoProfile -File approval-relay/install.ps1
-```
-
-macOS：
-
-```sh
-sh approval-relay/install.sh
-```
-
-Linux 暂不支持（`install.sh` 会直接报错退出）。macOS 必须有
-`helper-rs/target/release/approval-helper`；没有 PowerShell 回退，缺少助手时安装会失败。
-卸载：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File approval-relay/uninstall.ps1
-```
-
-```sh
-sh approval-relay/uninstall.sh          # 加 --purge 删除队列和审计数据
 ```
 
 `zh-cn/` 已有 `install.ps1` / `install.sh` / `uninstall.ps1` / `uninstall.sh`，见其 README。

@@ -67,7 +67,6 @@ const LABELS = {
   "app.zoom_reset": "重置缩放",
   "layout.switch": "切换到下一个布局",
   "layout.toggle:sidebar": "显示 / 隐藏侧栏",
-  "layout.toggle:approval-relay-panel": "显示 / 隐藏审批中继",
   "mod.open:picker": "打开选择器",
   "space.new": "新建空间",
   "space.prev": "上一个空间",
