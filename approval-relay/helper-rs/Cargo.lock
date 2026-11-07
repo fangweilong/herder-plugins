@@ -69,6 +69,7 @@ dependencies = [
  "cosmic-text",
  "fs2",
  "muda",
+ "objc2 0.5.3",
  "serde",
  "serde_json",
  "softbuffer",

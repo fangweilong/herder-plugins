@@ -54,6 +54,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// 让 Windows 11 用 DWM 裁剪圆角。softbuffer 的像素没有 alpha，自己画圆角
+/// 只会得到黑角；DWM 不支持的旧系统保持直角，但角上不再是黑色。
+#[cfg(windows)]
+fn round_window_corners(window: &Window) {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else { return };
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: i32 = 2;
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(hwnd: isize, attr: u32, value: *const std::ffi::c_void, size: u32) -> i32;
+    }
+    let preference = DWMWCP_ROUND;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            win32.hwnd.get(),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &preference as *const i32 as *const std::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
+/// macOS 没有 DWM：让内容视图的 CALayer 裁剪圆角，窗口设为透明，
+/// 圆角外才能露出桌面而不是黑块。窗口本身仍是矩形，命中区域不受影响。
+#[cfg(target_os = "macos")]
+fn round_window_corners(window: &Window) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyObject, Bool};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::AppKit(appkit) = handle.as_raw() else { return };
+    let view = appkit.ns_view.as_ptr() as *mut AnyObject;
+    unsafe {
+        let _: () = msg_send![view, setWantsLayer: Bool::YES];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if layer.is_null() {
+            return;
+        }
+        let _: () = msg_send![layer, setCornerRadius: 14.0f64];
+        let _: () = msg_send![layer, setMasksToBounds: Bool::YES];
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn round_window_corners(_window: &Window) {}
+
 fn app_home() -> PathBuf {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -252,7 +302,11 @@ impl Helper {
             .with_decorations(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_resizable(false);
+        // 圆角由 CALayer 裁剪，窗口必须透明，否则裁掉的部分会露出窗口底色。
+        #[cfg(target_os = "macos")]
+        let attrs = attrs.with_transparent(true);
         let Ok(window) = event_loop.create_window(attrs) else { return };
+        round_window_corners(&window);
         let window = Arc::new(window);
         let Ok(context) = Context::new(window.clone()) else { return };
         let context: &'static mut Context<Arc<Window>> = Box::leak(Box::new(context));
@@ -784,7 +838,7 @@ impl Helper {
             if wizard.index > 0 {
                 wizard.index -= 1;
                 self.ui.selected = wizard.answers[wizard.index].selected.clone();
-                self.ui.cursor = self.ui.selected.first().copied().unwrap_or(0);
+                self.ui.cursor = self.ui.selected.first().copied().unwrap_or(usize::MAX);
                 wizard.cursor = self.ui.cursor;
                 self.ui.input = wizard.answers[wizard.index].text.clone();
                 self.request_redraw();
@@ -815,7 +869,7 @@ impl Helper {
             if let Some(wizard) = &mut self.ui.wizard {
                 wizard.index += 1;
                 self.ui.selected = wizard.answers[wizard.index].selected.clone();
-                self.ui.cursor = self.ui.selected.first().copied().unwrap_or(0);
+                self.ui.cursor = self.ui.selected.first().copied().unwrap_or(usize::MAX);
                 wizard.cursor = self.ui.cursor;
                 self.ui.input = wizard.answers[wizard.index].text.clone();
                 self.ui.other_active = false;
@@ -1004,8 +1058,10 @@ impl Helper {
                     return;
                 }
                 Key::Named(NamedKey::Space) => {
-                    let cursor = self.ui.wizard.as_ref().map(|wizard| wizard.cursor).unwrap_or(0);
-                    self.select(cursor);
+                    let cursor = self.ui.wizard.as_ref().map(|wizard| wizard.cursor).unwrap_or(usize::MAX);
+                    if cursor < self.ui.current_options().len() {
+                        self.select(cursor);
+                    }
                     return;
                 }
                 _ => {}
@@ -1016,7 +1072,12 @@ impl Helper {
                     let count = self.ui.current_options().len();
                     if count > 0 {
                         let delta: i32 = if matches!(event.logical_key, Key::Named(NamedKey::ArrowDown)) { 1 } else { -1 };
-                        let next = (self.ui.cursor as i32 + delta).clamp(0, count as i32 - 1) as usize;
+                        // 初始光标不在任何选项上；第一次按方向键才落到第一项/最后一项。
+                        let next = if self.ui.cursor >= count {
+                            if delta > 0 { 0 } else { count - 1 }
+                        } else {
+                            (self.ui.cursor as i32 + delta).clamp(0, count as i32 - 1) as usize
+                        };
                         self.ui.cursor = next;
                         self.request_redraw();
                     }
@@ -1051,13 +1112,10 @@ impl Helper {
         if let Key::Named(NamedKey::Enter) = event.logical_key {
             if self.ui.request.as_ref().map(|request| request.multi).unwrap_or(false) {
                 self.submit_multi();
-            } else if let Some(option) = self
-                .ui
-                .current_options()
-                .iter()
-                .position(|option| option.is_default || option.selected)
-            {
-                self.select(option);
+            } else if self.ui.cursor < self.ui.current_options().len() {
+                // 只确认用户用方向键移动过的选项；没有选择时 Enter 不提交任何内容。
+                let cursor = self.ui.cursor;
+                self.select(cursor);
             }
         }
     }
@@ -1068,7 +1126,11 @@ impl Helper {
             return;
         }
         if let Some(wizard) = &mut self.ui.wizard {
-            wizard.cursor = (wizard.cursor as i32 + delta).clamp(0, count as i32 - 1) as usize;
+            wizard.cursor = if wizard.cursor >= count {
+                if delta > 0 { 0 } else { count - 1 }
+            } else {
+                (wizard.cursor as i32 + delta).clamp(0, count as i32 - 1) as usize
+            };
             self.ui.cursor = wizard.cursor;
         }
         self.request_redraw();

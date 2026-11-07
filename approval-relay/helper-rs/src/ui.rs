@@ -106,7 +106,7 @@ impl Ui {
             wizard: None,
             translate_loading: false,
             screen_translate_loading: false,
-            cursor: 0,
+            cursor: usize::MAX,
             pending_count: 0,
         }
     }
@@ -119,18 +119,12 @@ impl Ui {
                 answers: request
                     .questions
                     .iter()
-                    .map(|question| WizardAnswer {
-                        selected: question
-                            .options
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, option)| option.selected)
-                            .map(|(index, _)| index)
-                            .collect(),
+                    .map(|_| WizardAnswer {
+                        selected: Vec::new(),
                         text: String::new(),
                     })
                     .collect(),
-                cursor: 0,
+                cursor: usize::MAX,
             })
         } else {
             None
@@ -143,7 +137,8 @@ impl Ui {
             .filter(|(_, option)| option.selected)
             .map(|(index, _)| index)
             .collect();
-        self.cursor = self.selected.first().copied().unwrap_or(0);
+        // 初始不聚焦任何选项：用户必须自己点击、按数字或方向键后再确认。
+        self.cursor = usize::MAX;
         self.request = Some(request);
         self.other_active = false;
         self.input.clear();
@@ -218,8 +213,10 @@ impl Ui {
         let sc = |v: f32| v * scale;
         let width = pixmap.width() as f32;
         let inner_width = width - sc(MARGIN * 2.0);
+        // 整窗铺满不透明底色：softbuffer 在 Windows/macOS 上会丢弃 alpha，
+        // 若只画圆角，四角会以透明像素的形式变成黑块。圆角交给系统窗口裁剪。
         let surface = self.theme.surface;
-        fill_round(pixmap, Rect::from_xywh(0.0, 0.0, width, pixmap.height() as f32).unwrap(), sc(14.0), surface);
+        pixmap.fill(surface);
 
         let mut y = sc(MARGIN);
         let theme = self.theme;
@@ -370,81 +367,94 @@ impl Ui {
 
         let lines: Vec<&str> = request.screen.lines().collect();
         let line_size = sc(12.0);
-        // 与 draw_text 的 Metrics 行高一致；实际高度还要算上长行折行后的行数。
-        let line_h = line_size * 1.45;
-        let max_h = if self.screen_expanded { sc(320.0) } else { sc(220.0) };
-        let padding = sc(20.0);
         let text_x = sc(MARGIN + 12.0);
         let text_w = inner_width - sc(24.0);
-        let max_content_h = (max_h - padding).max(line_h);
 
-        // 从末尾往前保留能放下的行。终端内容通常看最后几行，长行会被 draw_text 折行，
-        // 所以不能用“逻辑行数”直接算卡片高度，否则文字会溢出卡片压到下面的选项上。
-        let mut lo = 0usize;
-        let mut hi = lines.len();
-        let mut keep = 0usize;
-        while lo <= hi {
-            let mid = lo + (hi - lo) / 2;
-            let body = if mid == 0 {
+        if !self.screen_expanded {
+            // 默认收起：整屏终端日志直接铺开会淹没问题本身，只给行数，需要时再展开。
+            let count = lines.iter().filter(|line| !line.trim().is_empty()).count();
+            let summary = self.i18n.tf("popup.screenLines", &[("{n}", &count.to_string())]);
+            let h = sc(32.0);
+            let rect = Rect::from_xywh(sc(MARGIN), y, inner_width, h).unwrap();
+            fill_round(pixmap, rect, sc(8.0), theme.canvas);
+            stroke_round(pixmap, rect, sc(8.0), blend(theme.border, theme.muted, 0.28));
+            self.text(pixmap, &summary, text_x, y + sc(9.0), text_w, line_size, theme.dim, true);
+            y += h + sc(8.0);
+        } else {
+            // 与 draw_text 的 Metrics 行高一致；实际高度还要算上长行折行后的行数。
+            let line_h = line_size * 1.45;
+            let max_h = sc(320.0);
+            let padding = sc(20.0);
+            let max_content_h = (max_h - padding).max(line_h);
+
+            // 从末尾往前保留能放下的行。终端内容通常看最后几行，长行会被 draw_text 折行，
+            // 所以不能用“逻辑行数”直接算卡片高度，否则文字会溢出卡片压到下面的选项上。
+            let mut lo = 0usize;
+            let mut hi = lines.len();
+            let mut keep = 0usize;
+            while lo <= hi {
+                let mid = lo + (hi - lo) / 2;
+                let body = if mid == 0 {
+                    String::new()
+                } else {
+                    lines[lines.len() - mid..].join("\n")
+                };
+                let body_h = self.wrapped_h(&body, line_size, text_w, true);
+                let omitted_h = if mid < lines.len() {
+                    let dropped = lines.len() - mid;
+                    let omitted = self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]);
+                    self.wrapped_h(&omitted, line_size, text_w, true)
+                } else {
+                    0.0
+                };
+                if body_h + omitted_h <= max_content_h {
+                    keep = mid;
+                    lo = mid + 1;
+                } else if mid == 0 {
+                    break;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+
+            let dropped = lines.len() - keep;
+            let omitted = if dropped > 0 {
+                Some(self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]))
+            } else {
+                None
+            };
+            let body = if keep == 0 {
                 String::new()
             } else {
-                lines[lines.len() - mid..].join("\n")
+                lines[lines.len() - keep..].join("\n")
             };
+            let omitted_h = omitted
+                .as_ref()
+                .map(|text| self.wrapped_h(text, line_size, text_w, true))
+                .unwrap_or(0.0);
             let body_h = self.wrapped_h(&body, line_size, text_w, true);
-            let omitted_h = if mid < lines.len() {
-                let dropped = lines.len() - mid;
-                let omitted = self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]);
-                self.wrapped_h(&omitted, line_size, text_w, true)
-            } else {
-                0.0
-            };
-            if body_h + omitted_h <= max_content_h {
-                keep = mid;
-                lo = mid + 1;
-            } else if mid == 0 {
-                break;
-            } else {
-                hi = mid - 1;
+            let screen_h = (body_h + omitted_h + padding).max(line_h + padding);
+            let screen_rect = Rect::from_xywh(sc(MARGIN), y, inner_width, screen_h).unwrap();
+            fill_round(pixmap, screen_rect, sc(8.0), theme.canvas);
+            stroke_round(pixmap, screen_rect, sc(8.0), blend(theme.border, theme.muted, 0.28));
+            let text_y = y + sc(10.0);
+            let mut body_y = text_y;
+            if let Some(omitted) = &omitted {
+                self.text(pixmap, omitted, text_x, body_y, text_w, line_size, theme.dim, true);
+                body_y += omitted_h;
             }
+            self.text(
+                pixmap,
+                &body,
+                text_x,
+                body_y,
+                text_w,
+                line_size,
+                blend(theme.muted, theme.foreground, 0.22),
+                true,
+            );
+            y += screen_h + sc(8.0);
         }
-
-        let dropped = lines.len() - keep;
-        let omitted = if dropped > 0 {
-            Some(self.i18n.tf("popup.screenOmitted", &[("{n}", &dropped.to_string())]))
-        } else {
-            None
-        };
-        let body = if keep == 0 {
-            String::new()
-        } else {
-            lines[lines.len() - keep..].join("\n")
-        };
-        let omitted_h = omitted
-            .as_ref()
-            .map(|text| self.wrapped_h(text, line_size, text_w, true))
-            .unwrap_or(0.0);
-        let body_h = self.wrapped_h(&body, line_size, text_w, true);
-        let screen_h = (body_h + omitted_h + padding).max(line_h + padding);
-        let screen_rect = Rect::from_xywh(sc(MARGIN), y, inner_width, screen_h).unwrap();
-        fill_round(pixmap, screen_rect, sc(8.0), theme.canvas);
-        stroke_round(pixmap, screen_rect, sc(8.0), blend(theme.border, theme.muted, 0.28));
-        let text_y = y + sc(10.0);
-        let mut body_y = text_y;
-        if let Some(omitted) = &omitted {
-            self.text(pixmap, omitted, text_x, body_y, text_w, line_size, theme.dim, true);
-            body_y += omitted_h;
-        }
-        self.text(
-            pixmap,
-            &body,
-            text_x,
-            body_y,
-            text_w,
-            line_size,
-            blend(theme.muted, theme.foreground, 0.22),
-            true,
-        );
-        y += screen_h + sc(8.0);
 
         if self.screen_translated && !self.screen_translation.trim().is_empty() {
             let header = if self.translation_provider.is_empty() {
@@ -619,12 +629,13 @@ impl Ui {
 
     fn option_row(&mut self, pixmap: &mut Pixmap, index: usize, option: &OptionItem, sc: impl Fn(f32) -> f32, y: f32, width: f32) -> f32 {
         let theme = self.theme;
+        // 单选不预选终端里的光标项：用户没点之前所有选项保持中性，避免误触 Enter 直接提交。
         let selected = if self.wizard.is_some() {
-            self.wizard_selects(index).unwrap_or(option.is_default || option.selected)
+            self.wizard_selects(index).unwrap_or(false)
         } else if self.current_multi() {
             self.selected.contains(&index)
         } else {
-            option.is_default || option.selected
+            false
         };
         let hovered = self.hover == Some(Hit::Option(index));
         let focused = self.hover.is_none() && self.cursor == index;
@@ -696,7 +707,7 @@ impl Ui {
         let mark = if self.current_multi() {
             if selected { "✓".to_string() } else { "☐".to_string() }
         } else if selected {
-            self.i18n.t("popup.default")
+            "✓".to_string()
         } else {
             String::new()
         };
