@@ -13,6 +13,14 @@ test("Windows 本地：Start-Process、路径加引号、单引号翻倍", () =>
   assert.ok(script.includes("Start-Process 'vscode://file/C:/a%20b/it%27s.ts'"));
 });
 
+test("Windows：code.cmd 的控制台窗口隐藏，协议 URL 回退不隐藏", () => {
+  const script = windowsLaunchScript(String.raw`C:\a.ts`, null, "file:///C:/a.ts", "vscode://file/C:/a.ts");
+  // code.cmd 由 Start-Process 拉起时会新建可见控制台窗口，必须隐藏。
+  assert.match(script, /Start-Process -FilePath 'code'.*-WindowStyle Hidden/);
+  // 协议 URL 交给系统处理，隐藏窗口会把 VS Code 一起隐藏。
+  assert.ok(!script.includes("Start-Process 'vscode://file/C:/a.ts' -WindowStyle Hidden"));
+});
+
 test("Windows 远程：用 --file-uri", () => {
   const uri = "vscode-remote://ssh-remote+workbox/home/u/x.ts";
   const script = windowsLaunchScript("/home/u/x.ts", "workbox", uri, "vscode://vscode-remote/ssh-remote+workbox/home/u/x.ts");

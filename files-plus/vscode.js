@@ -7,8 +7,10 @@ import { fileUri, protocolUrl, resolveHost } from "./uri.js";
 const platform = () => appWindow()?.platform ?? "linux";
 const isWindows = () => platform() === "windows";
 
+// Windows 上 exec 从 GUI 进程启动 powershell 会分配一个控制台窗口；
+// -WindowStyle Hidden 让它保持隐藏，避免每次打开文件都闪黑窗口。
 async function powershell(script) {
-  const r = await exec("powershell", ["-NoProfile", "-Command", script]);
+  const r = await exec("powershell", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", script]);
   if (r.code !== 0) throw new Error((r.stderr || "").trim() || `PowerShell 退出码 ${r.code}`);
   return r;
 }

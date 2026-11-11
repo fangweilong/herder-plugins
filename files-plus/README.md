@@ -95,7 +95,7 @@ Host 从 `hc machine ls --json` 的 `target` 读取。若机器是经中转连�
 ## 限制
 
 - **没有行号**：`EditorState` 不暴露光标位置，只能打开到文件顶部。
-- **依赖 `code` 命令**：Windows 通过 PowerShell 的 `Start-Process` 启动，避免 `exec` 等 GUI 进程；macOS/Linux 直接调用 `code`，失败时用 `open` / `xdg-open` 打开 `vscode://`。两者都没有时弹错误提示。
+- **依赖 `code` 命令**：Windows 通过 PowerShell 的 `Start-Process` 启动，避免 `exec` 等 GUI 进程；PowerShell 与 `code.cmd` 的控制台窗口都以隐藏方式启动，不会闪黑窗口。macOS/Linux 直接调用 `code`，失败时用 `open` / `xdg-open` 打开 `vscode://`。两者都没有时弹错误提示。
 - **不跟上游自动更新**：文件树和预览逻辑来自 Herdr 0.1.13 的 `mods/files`。Herdr 升级后，若内置文件面板改了行为，需要对照上游 `defaults/mods/files/main.js` 同步本目录的 `main.js`。
 - **重新安装 zh-cn 语言包会覆盖 `zh.json`**，把面板指回内置 `files`；重跑本目录的安装脚本（Windows `install.ps1`，macOS/Linux `install.sh`）即可。
 - 右键是直接打开，不是菜单。需要「打开 / 复制路径 / 在文件管理器中显示」的完整右键菜单时再加。
