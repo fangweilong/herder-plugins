@@ -76,6 +76,17 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1
   - `herdr-app do git-workbench.blame-file` 对当前选中文件打开 blame
   - `herdr-app do git-workbench.refresh`
 
+## 限制
+
+- 只支持本地窗口内的仓库；远程机器上的 space 会通过 `exec(..., { on })` 执行，但文件读取受 `readTextFile` 的 1 MiB 限制。
+- 单文件 diff 截断到 1.5 MB；blame 最多 5000 行、每页显示 400 行（整文件一次渲染会触发宿主元素上限）；提交列表每页 150 条；分支展开一次最多 200 条提交。
+- 没有语法高亮和真正的提交图（graph）；merge 提交相对第一父显示。
+- 布局集成按面板 id `changes` 定位；若自定义布局删掉了这个面板，安装脚本会跳过并提示，需手动把面板内容改成本 mod。
+- 对比视图从分支、标签、HEAD 中下拉选择，暂不支持输入任意 hash。
+- 分支树用普通子元素渲染，一次展开很多分支/提交时性能不如虚拟列表。
+- 没有三方合并编辑器；冲突文件仍显示 diff，解决冲突需要回终端。
+- `pull` 固定 `--ff-only`，`push` 不带 `-f`。
+
 ## 实现
 
 ```
@@ -112,14 +123,3 @@ git-workbench/
 node --test test/*.mjs
 herdr-app check .
 ```
-
-## 限制
-
-- 只支持本地窗口内的仓库；远程机器上的 space 会通过 `exec(..., { on })` 执行，但文件读取受 `readTextFile` 的 1 MiB 限制。
-- 单文件 diff 截断到 1.5 MB；blame 最多 5000 行、每页显示 400 行（整文件一次渲染会触发宿主元素上限）；提交列表每页 150 条；分支展开一次最多 200 条提交。
-- 没有语法高亮和真正的提交图（graph）；merge 提交相对第一父显示。
-- 布局集成按面板 id `changes` 定位；若自定义布局删掉了这个面板，安装脚本会跳过并提示，需手动把面板内容改成本 mod。
-- 对比视图从分支、标签、HEAD 中下拉选择，暂不支持输入任意 hash。
-- 分支树用普通子元素渲染，一次展开很多分支/提交时性能不如虚拟列表。
-- 没有三方合并编辑器；冲突文件仍显示 diff，解决冲突需要回终端。
-- `pull` 固定 `--ff-only`，`push` 不带 `-f`。
