@@ -2,11 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { FALLBACK_COMMANDS } from "../commands.js";
 import {
+  ancestorCandidates,
   buildProjectCommands,
+  buildSpringApps,
   hasProjectMarkers,
+  mavenArtifactId,
   packageManagerFor,
   parseScripts,
+  parseSpringConfig,
+  projectSummary,
   rootCandidates,
+  scriptLabel,
 } from "../project.js";
 
 function facts(overrides = {}) {
@@ -200,4 +206,192 @@ test("rootCandidates 先终端目录再 git 根，并去重", () => {
   assert.deepEqual(rootCandidates("D:/work/app/src", "D:/work/app"), ["D:/work/app/src", "D:/work/app"]);
   assert.deepEqual(rootCandidates("D:\\work\\app", "D:/work/app/"), ["D:\\work\\app"]);
   assert.deepEqual(rootCandidates("", "D:/work/app"), ["D:/work/app"]);
+});
+
+test("脚本名按意图命名，脚本内容作为说明", () => {
+  const list = buildProjectCommands(facts({
+    files: new Set(["package.json", "pnpm-lock.yaml"]),
+    packageJson: JSON.stringify({
+      scripts: {
+        "dev:server": "vite --host 0.0.0.0 --port 3000",
+        "build:prod": "vite build --mode production",
+        "lint:eslint": "eslint . --fix",
+        i: "pnpm install",
+        "custom-task": "node ./scripts/custom.mjs",
+      },
+    }),
+  }));
+  assert.deepEqual(commandsOf(list), [
+    "pnpm run dev:server",
+    "pnpm run build:prod",
+    "pnpm run lint:eslint",
+    "pnpm run i",
+    "pnpm run custom-task",
+    "pnpm install",
+    "clear",
+  ]);
+  assert.equal(list[0].name, "开发服务");
+  assert.equal(list[0].description, "vite --host 0.0.0.0 --port 3000");
+  assert.equal(list[1].name, "构建（生产）");
+  assert.equal(list[2].name, "ESLint 检查");
+  assert.equal(list[3].name, "安装依赖");
+  assert.equal(list[4].name, "custom-task");
+});
+
+test("scriptLabel 识别常见冒号与连字符写法", () => {
+  assert.equal(scriptLabel("dev"), "开发");
+  assert.equal(scriptLabel("dev-server"), "开发服务");
+  assert.equal(scriptLabel("build:stage"), "构建（预发）");
+  assert.equal(scriptLabel("test:unit"), "单元测试");
+  assert.equal(scriptLabel("test:web:ci"), "测试（Web CI）");
+  assert.equal(scriptLabel("serve:static"), "静态预览");
+  assert.equal(scriptLabel("build-with-env"), "build-with-env");
+  assert.equal(scriptLabel("deploy"), "deploy");
+});
+
+test("没有锁文件时使用 package.json 的 packageManager 字段", () => {
+  const list = buildProjectCommands(facts({
+    files: new Set(["package.json"]),
+    packageJson: JSON.stringify({
+      packageManager: "pnpm@9.15.0",
+      scripts: { dev: "vite" },
+    }),
+  }));
+  assert.deepEqual(commandsOf(list), ["pnpm run dev", "pnpm install", "clear"]);
+});
+
+test("ancestorCandidates 逐级向上，到 git 根为止", () => {
+  assert.deepEqual(
+    ancestorCandidates("D:/work/app/src/main/java", "D:/work/app"),
+    ["D:/work/app/src/main/java", "D:/work/app/src/main", "D:/work/app/src", "D:/work/app"],
+  );
+  assert.deepEqual(
+    ancestorCandidates("D:/work/app/src/main/java", "D:/work/app", 2),
+    ["D:/work/app/src/main/java", "D:/work/app/src/main", "D:/work/app"],
+  );
+  assert.deepEqual(ancestorCandidates("D:/work/app", "D:/work/app"), ["D:/work/app"]);
+});
+
+test("parseSpringConfig 读取 YAML 的 active profile、端口和列表写法", () => {
+  assert.deepEqual(
+    parseSpringConfig("spring:\n  profiles:\n    active: dev\nserver:\n  port: 13000\n"),
+    { profiles: ["dev"], port: 13000 },
+  );
+  assert.deepEqual(
+    parseSpringConfig("spring:\n  profiles:\n    active:\n      - dev\n      - test\n"),
+    { profiles: ["dev", "test"], port: null },
+  );
+  assert.deepEqual(
+    parseSpringConfig("spring.profiles.active=test,stage\nserver.port=8081\n"),
+    { profiles: ["test", "stage"], port: 8081 },
+  );
+  assert.deepEqual(parseSpringConfig("server:\n  port: ${PORT:9090}\n"), { profiles: [], port: 9090 });
+});
+
+test("Spring Boot：识别启动类、profile、端口，生成 IDEA 风格的启动/调试命令", () => {
+  const apps = buildSpringApps({
+    buildTool: "maven",
+    projectName: "chat-bi",
+    springDetected: true,
+    mainFiles: [{
+      path: "src/main/java/com/links/ChatBiApplication.java",
+      text: "package com.links;\n@SpringBootApplication\npublic class ChatBiApplication {}",
+    }],
+    resources: [
+      { path: "src/main/resources/application.yml", text: "spring:\n  profiles:\n    active: dev\nserver:\n  port: 13000\n" },
+      { path: "src/main/resources/application-test.yml", text: "server:\n  port: 13001\n" },
+      { path: "src/main/resources/application-pro.yml", text: "server:\n  port: 13002\n" },
+    ],
+  });
+  assert.deepEqual(apps, [{
+    name: "ChatBiApplication",
+    mainClass: "com.links.ChatBiApplication",
+    module: "",
+    buildTool: "maven",
+    profiles: ["dev", "test", "pro"],
+    activeProfile: "dev",
+    port: 13000,
+    profilePorts: { test: 13001, pro: 13002 },
+  }]);
+
+  const list = buildProjectCommands(facts({
+    platform: "windows",
+    files: new Set(["pom.xml", "mvnw.cmd"]),
+    pom: "<project><parent><artifactId>spring-boot-starter-parent</artifactId></parent><artifactId>chat-bi</artifactId></project>",
+    springApps: apps,
+  }));
+  assert.deepEqual(commandsOf(list), [
+    ".\\mvnw.cmd spring-boot:run",
+    ".\\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=test",
+    ".\\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=pro",
+    ".\\mvnw.cmd spring-boot:run -Dspring-boot.run.jvmArguments=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005",
+    ".\\mvnw.cmd clean package",
+    ".\\mvnw.cmd test",
+    "clear",
+  ]);
+  assert.equal(list[0].name, "启动 ChatBiApplication（dev）");
+  assert.equal(list[0].description, "profile dev · 端口 13000");
+  assert.equal(list[1].description, "profile test · 端口 13001");
+  assert.equal(list[3].name, "调试 ChatBiApplication");
+  assert.ok(list.slice(0, 6).every((item) => item.group === "Spring Boot"));
+});
+
+test("Spring Boot 多模块 Gradle：按子项目任务启动", () => {
+  const apps = buildSpringApps({
+    buildTool: "gradle",
+    projectName: "shop",
+    springDetected: true,
+    mainFiles: [{
+      path: "services/api/src/main/java/demo/ApiApplication.java",
+      text: "package demo;\n@SpringBootApplication\npublic class ApiApplication {}",
+    }],
+    resources: [],
+  });
+  assert.equal(apps[0].module, "services/api");
+
+  const list = buildProjectCommands(facts({
+    files: new Set(["build.gradle", "gradlew"]),
+    gradle: "plugins { id 'org.springframework.boot' version '3.3.0' }",
+    springApps: apps,
+  }));
+  assert.deepEqual(commandsOf(list), [
+    "./gradlew :services:api:bootRun",
+    "./gradlew :services:api:bootRun --debug-jvm",
+    "./gradlew build",
+    "./gradlew test",
+    "clear",
+  ]);
+});
+
+test("Spring Boot 多模块 Maven：用 -pl 指定子模块", () => {
+  const apps = buildSpringApps({
+    buildTool: "maven",
+    projectName: "shop",
+    springDetected: true,
+    mainFiles: [{
+      path: "services/api/src/main/java/demo/ApiApplication.java",
+      text: "package demo;\n@SpringBootApplication\npublic class ApiApplication {}",
+    }],
+    resources: [],
+  });
+  const list = buildProjectCommands(facts({
+    files: new Set(["pom.xml", "mvnw"]),
+    pom: "<project><artifactId>shop</artifactId></project>",
+    springApps: apps,
+  }));
+  assert.equal(list[0].command, "./mvnw -pl services/api spring-boot:run");
+});
+
+test("mavenArtifactId 跳过 parent，projectSummary 汇总项目类型", () => {
+  assert.equal(
+    mavenArtifactId("<project><parent><artifactId>spring-boot-starter-parent</artifactId></parent><artifactId>chat-bi</artifactId></project>"),
+    "chat-bi",
+  );
+  const summary = projectSummary(facts({
+    files: new Set(["pom.xml", "package.json"]),
+    pom: "<project><artifactId>chat-bi</artifactId></project>",
+    packageJson: JSON.stringify({ scripts: {} }),
+    springApps: [{ name: "ChatBiApplication" }],
+  }));
+  assert.equal(summary, "Spring Boot（Maven） · Node.js（npm）");
 });

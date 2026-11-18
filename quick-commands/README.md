@@ -7,7 +7,8 @@
 - **搜索式面板**：按名称、命令、分组、说明过滤，支持精确子串和字符子序列（`npb` 能找到 `npm run build`）。
 - **发送到当前终端**：通过 `hc send` 粘贴命令并回车；没有聚焦终端时给出提示，不会猜目标。
 - **新增 / 编辑 / 删除**：面板内直接操作，写回 JSON 配置；外部修改配置文件也会自动重载。
-- **项目感知模板**：打开面板时检测当前终端所在目录和 git 根，只排列这个项目实际用得上的启动、构建、测试命令；按启动 → 开发 → 构建 → 测试 → 检查排序。
+- **项目感知模板**：打开面板时从终端目录逐级向上找项目标记（`package.json`、`pom.xml`、`build.gradle` 等），只排列这个项目实际用得上的启动、构建、测试命令；面板顶部显示识别到的项目类型。
+- **使用项目里的真实脚本**：`package.json` 的每个 script 都会单独列出，名称按意图翻译（`dev:server` → 开发服务，`build:prod` → 构建（生产）），右侧说明显示脚本的真实内容；Spring Boot 项目会扫描 `@SpringBootApplication`，按启动类生成默认 / profile / 调试命令，profile 和端口来自 `application*.yml`。
 - **变量替换**：`${cwd}`、`${repo}`、`${branch}` 等；`${input:标签}` 会在运行前弹出一个输入表单。
 - 跟随 Herdr 主题配色；不占侧边栏或布局节点。
 
@@ -77,7 +78,7 @@ macOS / Linux：
 - `Ctrl+N` 新增命令，`Ctrl+E` 编辑选中的命令；自定义命令每行右侧也有「编辑」「删除」。
 - 自动模板右侧显示「复制」：点击会把模板内容填进新增表单，保存成自定义命令；自动模板本身不会写进配置文件。
 - 自定义命令和自动模板的命令文本完全相同时，只显示自定义命令。
-- 项目检测结果在面板顶部显示，可点「重新检测」刷新；检测失败或没有项目标记时回退到通用模板。
+- 项目检测结果在面板顶部显示（项目名 + 类型，例如 `chat-bi · Spring Boot（Maven）`），可点「重新检测」刷新；检测失败或没有项目标记时回退到通用模板。
 - 删除需要再点一次「删除」确认。
 - `Esc` 关闭面板；在新增 / 编辑 / 变量输入界面按 `Esc` 返回列表。
 
@@ -88,18 +89,19 @@ macOS / Linux：
 打开面板时按以下顺序检测：
 
 1. 先看当前终端的工作目录（`cwd`）；
-2. 再看 `git rev-parse --show-toplevel` 得到的仓库根。
+2. 再从 `cwd` 逐级向上（本机最多 6 级），直到 `git rev-parse --show-toplevel` 得到的仓库根；远程终端只检查 `cwd` 和仓库根，避免逐级读取的网络往返。
 
-选第一个包含项目标记的目录作为「项目」。标记包括 `package.json`、`Cargo.toml`、`pom.xml`、`build.gradle(.kts)`、`pyproject.toml`、`requirements.txt`、`setup.py`、`setup.cfg`、`uv.lock`、`poetry.lock`、`main.py`、Docker Compose 文件。这样在 monorepo 子包里打开时优先用子包自己的脚本，子包没有标记时再退回仓库根。
+选第一个包含项目标记的目录作为「项目」。标记包括 `package.json`、`Cargo.toml`、`pom.xml`、`build.gradle(.kts)`、`pyproject.toml`、`requirements.txt`、`setup.py`、`setup.cfg`、`uv.lock`、`poetry.lock`、`main.py`、Docker Compose 文件。这样在 monorepo 子包里打开时优先用子包自己的脚本，子包没有标记时再逐级退回。
 
 检测到项目后只生成对应的命令：
 
 | 项目 | 生成规则 |
 | --- | --- |
-| Node.js | 读取 `package.json` 的 `scripts`，按 `start` → `dev` → `serve` → `build` → `test` → `lint` → `format` → `typecheck` → `preview` → `watch` → `clean` 排序；其余脚本排在后面。锁文件决定包管理器：`pnpm-lock.yaml` → pnpm，`yarn.lock` → yarn，`bun.lockb` / `bun.lock` → bun，否则 npm。npm 的 `start` / `test` 用 `npm start`、`npm test`，其余用 `npm run <name>`。最后附加安装依赖。 |
+| Node.js | 读取 `package.json` 的 `scripts`，每个脚本一条命令；`dev:server`、`build:prod` 这类带命名空间的脚本会翻译成「开发服务」「构建（生产）」，未识别的保留脚本名。右侧说明是脚本的真实命令行。按启动 → 开发 → 构建 → 测试 → 检查 → 预览 → 清理排序。锁文件决定包管理器：`pnpm-lock.yaml` → pnpm，`yarn.lock` → yarn，`bun.lockb` / `bun.lock` → bun；没有锁文件时读 `package.json` 的 `packageManager` 字段，否则 npm。npm 的 `start` / `test` 用 `npm start`、`npm test`，其余用 `npm run <name>`。最后附加安装依赖。 |
 | Rust | `cargo run`、`cargo build`、`cargo test`、`cargo clippy --all-targets --all-features`、`cargo fmt`。 |
-| Maven | 优先使用 wrapper：Windows 为 `.\mvnw.cmd`，其它平台为 `./mvnw`；没有 wrapper 时用 `mvn`。检测到 Spring Boot 时，分组为 Spring Boot 并附加 `<wrapper> spring-boot:run`。 |
-| Gradle | 优先使用 wrapper：Windows 为 `.\gradlew.bat`，其它平台为 `./gradlew`；没有 wrapper 时用 `gradle`。检测到 Spring Boot 时，分组为 Spring Boot 并附加 `<wrapper> bootRun`。 |
+| Spring Boot | 扫描 `@SpringBootApplication` 找到启动类（git 项目用 `git grep` / `git ls-files`，本机非 git 项目递归扫描目录），从 `application*.yml` / `.properties` 读取 `spring.profiles.active`、`server.port` 和 `application-<profile>` 文件。每个启动类生成：默认配置启动、其余 profile 各一条、调试启动（JDWP 5005）。多模块 Maven 用 `-pl <module>`，Gradle 用 `:<module>:bootRun`。最后附加打包和测试。找不到启动类时，只要构建文件里有 spring-boot 依赖/插件，仍会生成带项目名的启动命令。 |
+| Maven | 优先使用 wrapper：Windows 为 `.\mvnw.cmd`，其它平台为 `./mvnw`；没有 wrapper 时用 `mvn`。非 Spring 项目生成 `clean package` 和 `test`。 |
+| Gradle | 优先使用 wrapper：Windows 为 `.\gradlew.bat`，其它平台为 `./gradlew`；没有 wrapper 时用 `gradle`。非 Spring 项目生成 `build` 和 `test`。 |
 | Python | `uv.lock` 或 `[tool.uv]` → `uv sync`、`uv run pytest`；`poetry.lock` 或 `[tool.poetry]` → `poetry install`、`poetry run pytest`；否则 `python -m venv .venv`、`pip install -r requirements.txt`、`python -m pytest`。有 `main.py` 时附加运行命令。 |
 | Docker | 存在 Compose 文件时生成 `docker compose up`、`up -d`、`down`、`logs -f`。 |
 | Git | 在 git 仓库里时生成 `git status`、`git log`、`git diff`、`git pull --ff-only`、`git push`。 |
@@ -161,9 +163,9 @@ macOS / Linux：
 ```
 quick-commands/
   mod.json                place: none；浮层尺寸与位置
-  main.js                 面板、搜索、增删改、项目检测、变量解析、发送
+  main.js                 面板、搜索、增删改、项目检测、Spring Boot 扫描、变量解析、发送
   commands.js             回退模板、配置校验与迁移、搜索、变量展开（纯函数）
-  project.js              按项目事实生成模板、排序（纯函数）
+  project.js              脚本命名、按项目事实生成模板、Spring Boot 应用与命令（纯函数）
   test/commands.test.mjs  配置与变量测试
   test/project.test.mjs   项目检测与模板生成测试
   install.ps1 / uninstall.ps1  Windows 安装/卸载
@@ -187,5 +189,9 @@ herdr-app check .
 - `${env:NAME}` 在远程 Windows 机器上不受支持（远端按 Unix 处理）。
 - 不读取终端选中文本，也没有 `${selectedText}` 之类的变量。
 - 项目检测在打开面板时执行一次；终端 `cd` 到别的项目或新增项目标记后，需要点「重新检测」。
-- 检测只读取文件名和少量文本（`package.json`、`pom.xml`、`build.gradle(.kts)`、`pyproject.toml`）；远程文件读取受 `readTextFile` 的大小限制，单个文件过大时可能检测不到关键内容。
+- 检测读取项目标记、`package.json`、`pom.xml`、`build.gradle(.kts)`、`pyproject.toml`，以及包含 `@SpringBootApplication` 的源文件和 `application*.yml` / `.properties`。
+- Spring Boot 启动类扫描在 git 项目里用 `git grep` / `git ls-files`，只覆盖已跟踪文件；本机非 git 项目会递归扫描目录；远程非 git 项目不做源码扫描，只能按构建文件里是否出现 spring-boot 生成通用启动命令。一个项目最多识别 12 个启动类。
+- profile 列表来自 `application-<profile>.*` 文件和配置里的 `spring.profiles.active`；没有配置文件的 profile 不会出现在列表里。端口只识别 `server.port` 的直接写法（含 `${PORT:8080}` 默认值），不解析配置中心。
+- 命令仍然在终端当前目录执行；`-pl` / `:module:bootRun` 这类多模块命令要求终端位于仓库根。项目检测可以向上找到根，但不会替你 `cd`。
+- 检测只读取文件名和少量文本；远程文件读取受 `readTextFile` 的大小限制，单个文件过大时可能检测不到关键内容。
 - 宿主是 Windows 且终端在本地时生成 `.\mvnw.cmd` / `.\gradlew.bat`；远程终端按 Unix 生成 `./mvnw` / `./gradlew`。

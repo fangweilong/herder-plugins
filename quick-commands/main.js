@@ -15,9 +15,67 @@ import {
   defaultConfig, expandCommand, makeId, matchCommands, migrateConfig, removeCommand,
   scanVariables, serializeConfig, upsertCommand,
 } from "./commands.js";
-import { buildProjectCommands, hasProjectMarkers, rootCandidates } from "./project.js";
+import {
+  ancestorCandidates, buildProjectCommands, buildSpringApps, hasProjectMarkers,
+  mavenArtifactId, moduleOf, projectSummary,
+} from "./project.js";
 
 const ROW_HEIGHT = 50;
+const SKIP_DIRS = new Set([
+  ".git", "node_modules", "target", "build", "dist", "out", ".gradle", ".idea", ".vscode",
+  ".next", "coverage", "bin", "obj",
+]);
+
+/** git 用 -z 输出 NUL 分隔；有些运行时会把 NUL 丢掉，所以同时按换行拆。 */
+function splitPaths(text) {
+  return String(text ?? "")
+    .split(/[\0\r\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** 有些运行时版本不支持 withFileTypes，退回逐个 stat。 */
+async function readEntries(dir) {
+  try {
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
+    return entries.map((entry) => ({ name: entry.name, dir: entry.isDirectory() }));
+  } catch {
+    const names = await fsp.readdir(dir);
+    const entries = [];
+    for (const name of names) {
+      try {
+        entries.push({ name, dir: (await fsp.stat(`${dir}/${name}`)).isDirectory() });
+      } catch {}
+    }
+    return entries;
+  }
+}
+
+/** 没有 git 时按目录扫描；只用于本机，远程项目依赖 git。 */
+async function localFiles(root, relDir, accept, limit) {
+  const found = [];
+  async function walk(rel, depth) {
+    if (found.length >= limit || depth > 8) return;
+    let entries;
+    try {
+      entries = await readEntries(`${root}/${rel}`);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (found.length >= limit) return;
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.dir) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        await walk(child, depth + 1);
+      } else if (accept(child)) {
+        found.push(child);
+      }
+    }
+  }
+  await walk(relDir, 0);
+  return found;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
@@ -55,6 +113,7 @@ export default class QuickCommands extends View {
     this.commands = [];
     this.projectCommands = [];
     this.projectRoot = "";
+    this.projectSummaryText = "";
     this.projectLoading = true;
     this.projectError = "";
     this.editingGenerated = false;
@@ -240,20 +299,112 @@ export default class QuickCommands extends View {
       gradle: texts["build.gradle"] ?? null,
       gradleKts: texts["build.gradle.kts"] ?? null,
       pyproject: texts["pyproject.toml"] ?? null,
+      springApps: [],
     };
+  }
+
+  emptyFacts(root, platform, git) {
+    return {
+      root, platform, git, files: new Set(), mainPy: false, compose: null,
+      packageJson: null, pom: null, gradle: null, gradleKts: null, pyproject: null, springApps: [],
+    };
+  }
+
+  async readIfPresent(path, target) {
+    try {
+      return await readTextFile(path, { on: target.on });
+    } catch {
+      return null;
+    }
+  }
+
+  async gitList(root, target, pathspecs) {
+    try {
+      const result = await exec("git", ["ls-files", "-z", "--", ...pathspecs], {
+        cwd: root, on: target.on, timeout: 20000,
+      });
+      return result.code === 0 ? splitPaths(result.stdout) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async gitMainFiles(root, target) {
+    try {
+      const result = await exec("git", [
+        "grep", "--no-color", "-l", "-z", "-e", "@SpringBootApplication", "--", "*.java", "*.kt",
+      ], { cwd: root, on: target.on, timeout: 20000 });
+      // 没有匹配时 git grep 返回 1，不是错误。
+      if (result.code !== 0 && result.code !== 1) return [];
+      return splitPaths(result.stdout).filter((path) => /(^|\/)src\/main\//.test(path));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 像 IDEA 一样从源码里找 @SpringBootApplication：启动类名、模块、profile、端口。
+   * git 项目用 git grep / git ls-files，远程机器同样适用；非 git 项目只扫描本机目录。
+   */
+  async collectSpring(facts, target) {
+    const root = facts.root;
+    const maven = facts.files.has("pom.xml");
+    const gradle = facts.files.has("build.gradle") || facts.files.has("build.gradle.kts");
+    if (!maven && !gradle) return [];
+    const buildTool = maven ? "maven" : "gradle";
+    const springDetected = /spring-boot|springframework\.boot/i
+      .test(`${facts.pom ?? ""}\n${facts.gradle ?? ""}\n${facts.gradleKts ?? ""}`);
+
+    let paths = [];
+    if (facts.git) {
+      paths = await this.gitMainFiles(root, target);
+    } else if (!target.on) {
+      paths = await localFiles(root, "", (path) => /(^|\/)src\/main\/.*(?:Application|App|Main)\.(?:java|kt)$/i.test(path), 200);
+    }
+
+    const mainFiles = [];
+    for (const path of paths.slice(0, 12)) {
+      const text = await this.readIfPresent(`${root}/${path}`, target);
+      if (text && text.includes("@SpringBootApplication")) mainFiles.push({ path, text });
+    }
+
+    const modules = new Set(mainFiles.map((file) => moduleOf(file.path)));
+    if (!modules.size) modules.add("");
+    const resources = [];
+    for (const module of modules) {
+      const dir = module ? `${module}/src/main/resources` : "src/main/resources";
+      let inDir = [];
+      if (facts.git) {
+        inDir = await this.gitList(root, target, [dir]);
+      } else if (!target.on) {
+        inDir = await localFiles(root, dir, (path) => /application(?:-[^/]+)?\.(?:ya?ml|properties)$/i.test(path), 40);
+      }
+      for (const path of inDir.slice(0, 40)) {
+        const name = path.split("/").pop() ?? "";
+        if (!/^application(?:-[^/]+)?\.(?:ya?ml|properties)$/i.test(name)) continue;
+        const text = await this.readIfPresent(`${root}/${path}`, target);
+        if (text !== null) resources.push({ path, text });
+      }
+    }
+
+    return buildSpringApps({
+      buildTool,
+      projectName: mavenArtifactId(facts.pom) || baseName(root),
+      springDetected,
+      mainFiles,
+      resources,
+    });
   }
 
   async loadProject(cx) {
     this.projectLoading = true;
     this.projectError = "";
+    this.projectSummaryText = "";
     cx.notify();
     const target = this.currentTarget();
     const platform = window()?.platform === "windows" && !target?.on ? "windows" : "unix";
     if (!target?.cwd) {
-      this.projectCommands = buildProjectCommands({
-        root: "", platform, git: false, files: new Set(), mainPy: false, compose: null,
-        packageJson: null, pom: null, gradle: null, gradleKts: null, pyproject: null,
-      });
+      this.projectCommands = buildProjectCommands(this.emptyFacts("", platform, false));
       this.projectRoot = "";
       this.projectLoading = false;
       cx.notify();
@@ -265,10 +416,24 @@ export default class QuickCommands extends View {
         const result = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: target.cwd, on: target.on });
         if (result.code === 0) gitRoot = result.stdout.trim();
       } catch {}
-      const roots = rootCandidates(target.cwd, gitRoot);
+      // 本地可以多向上找几级；远程每次 readTextFile 都是一次往返，保持原来的两级。
+      const roots = ancestorCandidates(target.cwd, gitRoot, target.on ? 1 : 6);
       for (const root of roots) {
         const facts = await this.readFacts(root, target, platform, Boolean(gitRoot));
-        if (hasProjectMarkers(facts) || root === roots[roots.length - 1]) {
+        if (hasProjectMarkers(facts)) {
+          try {
+            facts.springApps = await this.collectSpring(facts, target);
+          } catch {
+            facts.springApps = [];
+          }
+          this.projectCommands = buildProjectCommands(facts);
+          this.projectSummaryText = projectSummary(facts);
+          this.projectRoot = facts.root;
+          this.projectLoading = false;
+          cx.notify();
+          return;
+        }
+        if (root === roots[roots.length - 1]) {
           this.projectCommands = buildProjectCommands(facts);
           this.projectRoot = facts.root;
           this.projectLoading = false;
@@ -279,10 +444,7 @@ export default class QuickCommands extends View {
     } catch (error) {
       this.projectError = `项目检测失败：${errorMessage(error)}`;
     }
-    this.projectCommands = buildProjectCommands({
-      root: target.cwd, platform, git: false, files: new Set(), mainPy: false, compose: null,
-      packageJson: null, pom: null, gradle: null, gradleKts: null, pyproject: null,
-    });
+    this.projectCommands = buildProjectCommands(this.emptyFacts(target.cwd, platform, false));
     this.projectRoot = target.cwd;
     this.projectLoading = false;
     cx.notify();
@@ -770,7 +932,10 @@ export default class QuickCommands extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim)
           .child(this.projectLoading
             ? "正在检测项目…"
-            : this.projectError || (this.projectRoot ? `项目：${baseName(this.projectRoot)}` : "未检测到项目")))
+            : this.projectError
+              || (this.projectRoot
+                ? `项目：${baseName(this.projectRoot)}${this.projectSummaryText ? ` · ${this.projectSummaryText}` : ""}`
+                : "未检测到项目")))
         .when(!this.projectLoading, (element) => element.child(
           this.linkButton("qc-redetect", "重新检测", t.accent, (cx) => this.detectProject(cx), t))))
       .when(Boolean(this.loadError || this.actionError), (element) => element.child(
