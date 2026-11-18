@@ -2,13 +2,15 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, Scrollbar, v_virtual_list } from "gpui-base";
-import { settings } from "herdr";
 import * as git from "../git.js";
 import { diffStats } from "../git.js";
 import { relativeTime } from "../git-parse.js";
+import { fileTreeRows } from "../tree.js";
 import { addDel, chip, emptyState, errorBar, sectionTitle, shortPath, statusColor, textButton } from "../ui.js";
 import { buildDiffRows, diffContentWidth, diffHeader, renderDiff } from "./diff-view.js";
+import { dirRow, isDirCollapsed, toggleDir } from "./file-tree.js";
 import { showInStage, syncStage } from "./stage.js";
+import { fs, monoFontFamily } from "../text.js";
 
 const PAGE = 150;
 
@@ -28,6 +30,7 @@ export function createLogState() {
     diff: null,
     diffLoading: false,
     commitLoading: false,
+    collapsed: {}, // 目录收起状态，按提交区分，见 file-tree.js
     token: 0,
     fileToken: 0,
   };
@@ -191,22 +194,22 @@ function commitRow(v, commit, t, cx) {
     .child(div().w(2).h(30).flex_none().rounded(1).when(selected, (e) => e.bg(t.accent)))
     .child(v_flex().flex_1().min_w(0).gap(3)
       .child(h_flex().w_full().gap(5).items_center()
-        .child(div().text_size(10).text_color(commit.merge ? t.ansi3 : t.dim).child(commit.merge ? "⑂" : "●"))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(selected ? t.foreground : t.foreground).child(commit.subject || "(无提交信息)"))
+        .child(div().text_size(fs(11)).text_color(commit.merge ? t.ansi3 : t.dim).child(commit.merge ? "⑂" : "●"))
+        .child(div().flex_1().min_w(0).truncate().text_size(fs(13)).text_color(selected ? t.foreground : t.foreground).child(commit.subject || "(无提交信息)"))
         .children(commit.refs.slice(0, 2).map((ref) => refBadge(ref, t))))
       .child(h_flex().w_full().gap(6).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(`${commit.author} · ${relativeTime(commit.date)}`))
-        .child(div().text_size(10).text_color(t.muted).font_family(settings().font_family ?? "monospace").child(commit.short))));
+        .child(div().flex_1().min_w(0).truncate().text_size(fs(11)).text_color(t.dim).child(`${commit.author} · ${relativeTime(commit.date)}`))
+        .child(div().text_size(fs(11)).text_color(t.muted).font_family(monoFontFamily()).child(commit.short))));
 }
 
 export function renderLogList(v, t, cx) {
   const state = v.log;
   const commits = filtered(state);
   const header = h_flex().w_full().flex_none().h(34).px(10).gap(6).items_center().border_b(1).border_color(t.border)
-    .child(div().text_size(11).font_semibold().text_color(t.muted).child("提交"))
-    .child(div().text_size(10).text_color(t.dim).child(`${state.commits.length}${state.hasMore ? "+" : ""}`))
+    .child(div().text_size(fs(12)).font_semibold().text_color(t.muted).child("提交"))
+    .child(div().text_size(fs(11)).text_color(t.dim).child(`${state.commits.length}${state.hasMore ? "+" : ""}`))
     .child(div().flex_1())
-    .child(div().id("log-refresh").text_size(11).text_color(t.muted).cursor_pointer()
+    .child(div().id("log-refresh").text_size(fs(12)).text_color(t.muted).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => loadLogPage(v, cx, true)).child("刷新"));
 
@@ -215,7 +218,7 @@ export function renderLogList(v, t, cx) {
     .child(h_flex().flex_none().h(36).px(8).items_center().border_b(1).border_color(t.border)
       .child(div().flex_1().h(26).px(8).flex().items_center().rounded(6).bg(t.input).border_1().border_color(t.border)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .child(Input.new(state.filter).h_full().text_size(11).text_color(t.foreground))))
+        .child(Input.new(state.filter).h_full().text_size(fs(12)).text_color(t.foreground))))
     .when(Boolean(state.error), (e) => e.child(errorBar(state.error, t)))
     .child(div().flex_1().min_h(0).relative()
       .child(div().id("log-list-x").size_full().overflow_y_scrollbar().child(
@@ -227,24 +230,27 @@ export function renderLogList(v, t, cx) {
         state.filterText ? "换个关键词试试" : null, t))))
       .when(state.loading && !state.commits.length, (e) => e.child(div().absolute().inset_0().child(emptyState("加载提交…", null, t)))))
     .when(state.hasMore && !state.filterText, (e) => e.child(h_flex().flex_none().h(30).justify_center().items_center()
-      .child(div().id("log-more").text_size(11).text_color(t.accent).cursor_pointer()
+      .child(div().id("log-more").text_size(fs(12)).text_color(t.accent).cursor_pointer()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => loadLogPage(v, cx, false)).child(state.loading ? "加载中…" : "加载更多"))));
 }
 
 function metaLine(label, value, t) {
   return h_flex().gap(6).items_center()
-    .child(div().w(42).flex_none().text_size(10).text_color(t.dim).child(label))
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(value));
+    .child(div().w(42).flex_none().text_size(fs(11)).text_color(t.dim).child(label))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(t.muted).child(value));
 }
 
-function fileRow(v, file, t, cx) {
+function fileRow(v, entry, t, cx) {
+  const file = entry.file;
   const selected = v.log.file === file.path;
-  return h_flex().id(`log-file-${file.path}`).w_full().h(26).flex_none().gap(6).px(8)
+  return h_flex().id(`log-file-${file.path}`).w_full().h(26).flex_none().gap(6)
+    .pl(8 + entry.depth * 12).pr(8)
     .when(selected, (e) => e.bg(t.selected)).hover((s) => s.bg(selected ? t.selected : t.hover))
     .cursor_pointer().on_click((_e, cx) => readCommitFile(v, file.path, cx, true))
-    .child(div().w(12).flex_none().text_size(10).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(selected ? t.foreground : t.muted).child(file.path))
+    .child(div().w(12).flex_none().text_size(fs(11)).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(13)).text_color(selected ? t.foreground : t.muted)
+      .child(entry.name).tooltip(file.path))
     .child(addDel(file.add, file.del, t))
     .child(textButton(`blame-${file.path}`, "追溯", t, (cx) => v.showBlame(file.path, cx), { small: true }));
 }
@@ -257,7 +263,7 @@ export function renderLogDetail(v, t, cx) {
 
   const header = v_flex().w_full().flex_none().gap(6).p(12).border_b(1).border_color(t.border)
     .child(h_flex().w_full().gap(8).items_center()
-      .child(div().flex_1().min_w(0).text_size(14).font_semibold().text_color(t.foreground).child(commit?.subject ?? "(无提交信息)"))
+      .child(div().flex_1().min_w(0).text_size(fs(14)).font_semibold().text_color(t.foreground).child(commit?.subject ?? "(无提交信息)"))
       .child(textButton("commit-cherry-pick", "拣选", t, (cx) => v.askAction({
         title: "拣选提交",
         body: `把 ${commit?.short} 应用到当前分支？`,
@@ -289,21 +295,25 @@ export function renderLogDetail(v, t, cx) {
         done: (c2) => readCommit(v, state.selected, c2),
       }), { small: true })))
     .child(h_flex().w_full().gap(8).items_center()
-      .child(div().text_size(11).text_color(t.muted).child(commit?.author ?? ""))
-      .child(div().text_size(10).text_color(t.dim).child(commit ? relativeTime(commit.date) : ""))
-      .child(div().text_size(10).text_color(t.dim).font_family(settings().font_family ?? "monospace").child(commit?.short ?? ""))
+      .child(div().text_size(fs(12)).text_color(t.muted).child(commit?.author ?? ""))
+      .child(div().text_size(fs(11)).text_color(t.dim).child(commit ? relativeTime(commit.date) : ""))
+      .child(div().text_size(fs(11)).text_color(t.dim).font_family(monoFontFamily()).child(commit?.short ?? ""))
       .child(div().flex_1())
-      .child(div().text_size(10).text_color(t.dim).child(commit?.parents?.length ? `${commit.parents.length} 个父提交` : "")))
+      .child(div().text_size(fs(11)).text_color(t.dim).child(commit?.parents?.length ? `${commit.parents.length} 个父提交` : "")))
     .when(Boolean(commit?.refs?.length), (e) => e.child(h_flex().gap(4).children(commit.refs.map((ref) => refBadge(ref, t)))))
-    .when(Boolean(detail?.body && detail.body !== commit?.subject), (e) => e.child(div().text_size(11).text_color(t.muted).child(detail.body)));
+    .when(Boolean(detail?.body && detail.body !== commit?.subject), (e) => e.child(div().text_size(fs(12)).text_color(t.muted).child(detail.body)));
 
   const files = state.files;
   const filePanel = v_flex().w_full().flex_none().border_b(1).border_color(t.border)
     .child(sectionTitle(`改动 ${files.length} 个文件`, t))
     .child(div().w_full().flex_none().max_h(164).overflow_y_scrollbar()
-      .children(files.map((file) => fileRow(v, file, t, cx))))
-    .when(!files.length && state.commitLoading, (e) => e.child(div().p(10).text_size(11).text_color(t.dim).child("加载改动…")))
-    .when(!files.length && !state.commitLoading, (e) => e.child(div().p(10).text_size(11).text_color(t.dim).child("这个提交没有文件改动")));
+      .children(fileTreeRows(files, (dir) => isDirCollapsed(state.collapsed, state.selected, dir)).map((row) =>
+        row.kind === "dir"
+          ? dirRow(`log-${state.selected}`, row, t,
+            (path, cx) => toggleDir(state.collapsed, state.selected, path, cx), { height: 26 })
+          : fileRow(v, row, t, cx))))
+    .when(!files.length && state.commitLoading, (e) => e.child(div().p(10).text_size(fs(12)).text_color(t.dim).child("加载改动…")))
+    .when(!files.length && !state.commitLoading, (e) => e.child(div().p(10).text_size(fs(12)).text_color(t.dim).child("这个提交没有文件改动")));
 
   const diffArea = state.file
     ? v_flex().flex_1().min_h(0)
@@ -312,11 +322,11 @@ export function renderLogDetail(v, t, cx) {
           (cx) => showInStage(v, cx, commitTarget(v, state.file)), { small: true })))
       .child(div().flex_1().min_h(0).relative()
         .when(state.diffLoading, (el) => el.child(div().absolute().inset_0().flex().items_center().justify_center()
-          .child(div().text_size(11).text_color(t.dim).child("加载 diff…"))))
+          .child(div().text_size(fs(12)).text_color(t.dim).child("加载 diff…"))))
         .when(!state.diffLoading && Boolean(state.diff?.error), (el) => el.child(div().absolute().inset_0().flex().items_center().justify_center()
-          .child(div().text_size(11).text_color(t.dim).child(state.diff.error))))
+          .child(div().text_size(fs(12)).text_color(t.dim).child(state.diff.error))))
         .when(!state.diffLoading && !state.diff?.error, (el) => el.child(
-          renderDiff(state.diff?.rows ?? [], t, "log-diff", state.diff?.width ?? 600, settings().font_family ?? "monospace"))))
+          renderDiff(state.diff?.rows ?? [], t, "log-diff", state.diff?.width ?? 600, monoFontFamily()))))
     : div().flex_1().min_h(0).relative()
       .child(div().absolute().inset_0().child(emptyState(state.commitLoading ? "加载提交…" : "选择一个文件", "右侧显示并排 diff", t)));
 

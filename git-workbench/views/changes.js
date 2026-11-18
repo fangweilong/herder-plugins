@@ -2,14 +2,16 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, Scrollbar } from "gpui-base";
-import { settings } from "herdr";
 import { loadLogPage } from "./log.js";
 import * as git from "../git.js";
 import { diffStats } from "../git.js";
 import { statusLetter } from "../git-parse.js";
+import { fileTreeRows } from "../tree.js";
 import { addDel, emptyState, errorBar, shortPath, statusColor, textButton } from "../ui.js";
 import { buildDiffRows, diffContentWidth, diffHeader, renderDiff } from "./diff-view.js";
+import { dirRow, isDirCollapsed, toggleDir } from "./file-tree.js";
 import { refreshStage, showInStage, syncStage } from "./stage.js";
+import { fs, monoFontFamily } from "../text.js";
 
 export function createChangesState() {
   const message = InputState.new({ placeholder: "提交信息" });
@@ -25,6 +27,7 @@ export function createChangesState() {
     amend: false,
     busy: false,
     note: "",
+    collapsed: {}, // 目录收起状态，键含分组，见 file-tree.js
     token: 0,
     fileToken: 0,
     signature: "",
@@ -192,27 +195,30 @@ function runWrite(v, cx, action, success) {
 function groupRow(v, group, t, cx) {
   const count = group.files.length;
   return h_flex().w_full().h(27).flex_none().px(8).gap(6).items_center().bg(t.chrome)
-    .child(div().text_size(10).font_semibold().text_color(t.dim).child(`${group.label} (${count})`))
+    .child(div().text_size(fs(11)).font_semibold().text_color(t.dim).child(`${group.label} (${count})`))
     .child(div().flex_1())
-    .when(group.id === "staged", (e) => e.child(div().id("unstage-all").text_size(10).text_color(t.muted).cursor_pointer()
+    .when(group.id === "staged", (e) => e.child(div().id("unstage-all").text_size(fs(11)).text_color(t.muted).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => runWrite(v, cx, (root, on) => git.write.unstageAll(root, on), "已全部取消暂存"))
       .child("全部取消")))
-    .when(group.id === "untracked", (e) => e.child(div().id("add-all").text_size(10).text_color(t.muted).cursor_pointer()
+    .when(group.id === "untracked", (e) => e.child(div().id("add-all").text_size(fs(11)).text_color(t.muted).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => runWrite(v, cx, (root, on) => git.write.stage(root, on, group.files.map((file) => file.path)), "已添加全部未跟踪文件"))
       .child("全部添加")));
 }
 
-function fileRow(v, file, group, t, cx) {
+function fileRow(v, entry, group, t, cx) {
+  const file = entry.file;
   const state = v.changes;
   const selected = state.selected?.group === group.id && state.selected?.path === file.path;
   const letter = statusLetter(file);
-  const row = h_flex().id(`${group.id}-${file.path}`).w_full().h(27).flex_none().gap(5).px(6)
+  const row = h_flex().id(`${group.id}-${file.path}`).w_full().h(27).flex_none().gap(5)
+    .pl(6 + entry.depth * 12).pr(6)
     .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
     .on_click((_e, cx) => readChange(v, group.id, file.path, cx, true))
-    .child(div().w(11).flex_none().text_size(10).font_semibold().text_color(statusColor(letter, t)).child(letter))
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(selected ? t.foreground : t.muted).child(file.path))
+    .child(div().w(11).flex_none().text_size(fs(11)).font_semibold().text_color(statusColor(letter, t)).child(letter))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(13)).text_color(selected ? t.foreground : t.muted)
+      .child(entry.name).tooltip(file.path))
     .child(addDel(file.add, file.del, t));
 
   if (group.id === "staged") {
@@ -243,14 +249,15 @@ export function renderChangesList(v, t, cx) {
   const rows = [];
   for (const group of all) {
     rows.push({ kind: "group", group });
-    for (const file of group.files) rows.push({ kind: "file", group, file });
+    const tree = fileTreeRows(group.files, (dir) => isDirCollapsed(state.collapsed, group.id, dir));
+    for (const row of tree) rows.push({ ...row, group });
   }
   const header = h_flex().w_full().flex_none().h(34).px(10).gap(6).items_center().border_b(1).border_color(t.border)
-    .child(div().text_size(11).font_semibold().text_color(t.muted).child("工作区"))
-    .child(div().text_size(10).text_color(t.dim).child(`${total} 个文件`))
+    .child(div().text_size(fs(13)).font_semibold().text_color(t.muted).child("工作区"))
+    .child(div().text_size(fs(11)).text_color(t.dim).child(`${total} 个文件`))
     .child(div().flex_1())
     .child(textButton("stage-all", "全部暂存", t, (cx) => runWrite(v, cx, (root, on) => git.write.stageAll(root, on), "已全部暂存"), { small: true }))
-    .child(div().id("changes-refresh").text_size(11).text_color(t.muted).cursor_pointer()
+    .child(div().id("changes-refresh").text_size(fs(12)).text_color(t.muted).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => refreshChanges(v, cx)).child("刷新"));
 
@@ -258,12 +265,15 @@ export function renderChangesList(v, t, cx) {
     .child(header)
     .when(Boolean(state.error), (e) => e.child(errorBar(state.error, t)))
     .when(Boolean(state.note), (e) => e.child(h_flex().w_full().flex_none().px(10).py(4)
-      .child(div().text_size(10).text_color(state.note.startsWith("失败") ? t.ansi1 : t.muted).child(state.note))))
+      .child(div().text_size(fs(11)).text_color(state.note.startsWith("失败") ? t.ansi1 : t.muted).child(state.note))))
     .child(div().flex_1().min_h(0).relative()
       .child(div().id("changes-list-x").size_full().overflow_y_scrollbar()
         .children(rows.map((row) => row.kind === "group"
           ? groupRow(v, row.group, t, cx)
-          : fileRow(v, row.file, row.group, t, cx))))
+          : row.kind === "dir"
+            ? dirRow(`changes-${row.group.id}`, row, t,
+              (path, cx) => toggleDir(state.collapsed, row.group.id, path, cx), { height: 27 })
+            : fileRow(v, row, row.group, t, cx))))
       .child(Scrollbar.vertical("changes-list").viewport_from_layout().absolute().inset_0())
       .when(!rows.length && !state.loading, (e) => e.child(div().absolute().inset_0()
         .child(emptyState(state.hasHead ? "没有未提交的改动" : "仓库还没有提交", "工作区是干净的", t))))
@@ -276,7 +286,7 @@ export function renderChangesDetail(v, t, cx) {
   const message = h_flex().w_full().flex_none().p(8).gap(6).items_center().border_t(1).border_color(t.border)
     .child(div().flex_1().min_w(0).h(30).px(8).flex().items_center().rounded(7).bg(t.input).border_1().border_color(t.border)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .child(Input.new(state.message).h_full().text_size(11).text_color(t.foreground)))
+      .child(Input.new(state.message).h_full().text_size(fs(12)).text_color(t.foreground)))
     .child(textButton("changes-stash", "贮藏", t, (cx) => v.askAction({
       title: "贮藏工作区",
       body: "把当前改动（含未跟踪文件）存入贮藏，工作区恢复干净。",
@@ -322,22 +332,22 @@ export function renderChangesDetail(v, t, cx) {
     ? v_flex().flex_1().min_h(0)
       .child(diffHeader(shortPath(state.selected.path, 72), state.diff?.stats, t,
         h_flex().gap(6).items_center()
-          .when(state.selected.group === "staged", (e) => e.child(div().text_size(10).text_color(t.dim).child("已暂存")))
+          .when(state.selected.group === "staged", (e) => e.child(div().text_size(fs(11)).text_color(t.dim).child("已暂存")))
           .child(textButton("changes-stage-open", "主区域打开", t,
             (cx) => showInStage(v, cx, changeTarget(state.selected.group, state.selected.path)), { small: true }))))
       .child(div().flex_1().min_h(0).relative()
         .when(state.diffLoading, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-          .child(div().text_size(11).text_color(t.dim).child("加载 diff…"))))
+          .child(div().text_size(fs(12)).text_color(t.dim).child("加载 diff…"))))
         .when(!state.diffLoading && Boolean(state.diff?.error), (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-          .child(div().text_size(11).text_color(t.dim).child(state.diff.error))))
+          .child(div().text_size(fs(12)).text_color(t.dim).child(state.diff.error))))
         .when(!state.diffLoading && !state.diff?.error, (e) => e.child(
-          renderDiff(state.diff?.rows ?? [], t, "changes-diff", state.diff?.width ?? 600, settings().font_family ?? "monospace"))))
+          renderDiff(state.diff?.rows ?? [], t, "changes-diff", state.diff?.width ?? 600, monoFontFamily()))))
     : div().flex_1().min_h(0).relative()
       .child(div().absolute().inset_0().child(emptyState("选择一个文件", "右侧显示并排 diff", t)));
 
   return v_flex().size_full().min_h(0)
     .child(diffArea)
     .when(Boolean(state.note), (e) => e.child(h_flex().flex_none().px(10).py(4)
-      .child(div().text_size(10).text_color(state.note.startsWith("失败") ? t.ansi1 : t.dim).child(state.note))))
+      .child(div().text_size(fs(11)).text_color(state.note.startsWith("失败") ? t.ansi1 : t.dim).child(state.note))))
     .child(message);
 }

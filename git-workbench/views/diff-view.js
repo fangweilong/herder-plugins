@@ -4,8 +4,12 @@
 import { div } from "gpui-kit";
 import { h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { sideBySide } from "../diff.js";
+import { fs } from "../text.js";
 
-export const ROW_H = 20;
+/** 单行高度随界面字号缩放；虚拟列表与主区域滚动都按它计算。 */
+export function rowHeight() {
+  return Math.max(20, Math.round(fs(22)));
+}
 
 /**
  * 把解析后的 diff 展平为渲染行：
@@ -28,11 +32,11 @@ export function diffContentWidth(rows) {
     const length = Math.max(row.left?.text?.length ?? 0, row.right?.text?.length ?? 0);
     if (length > max) max = length;
   }
-  return Math.max(600, max * 14.4 + 140);
+  return Math.max(fs(600), max * fs(15.6) + fs(140));
 }
 
 function numberCell(no, t) {
-  return div().w(38).flex_none().text_right().pr(6).text_size(10).text_color(t.dim).child(no == null ? "" : String(no));
+  return div().w(fs(38)).flex_none().text_right().pr(fs(6)).text_size(fs(11)).text_color(t.dim).child(no == null ? "" : String(no));
 }
 
 function segments(side, t, tone) {
@@ -47,11 +51,11 @@ function cell(side, t, options) {
   // options: { bg, tone, borderLeft }
   const { bg, tone } = options;
   if (!side) {
-    return h_flex().flex_1().min_w(0).h(ROW_H).bg(options.emptyBg ?? t.raised)
+    return h_flex().flex_1().min_w(0).h(rowHeight()).bg(options.emptyBg ?? t.raised)
       .when(options.borderLeft, (e) => e.border_l(1).border_color(t.border))
-      .child(div().w(38).flex_none());
+      .child(div().w(fs(38)).flex_none());
   }
-  return h_flex().flex_1().min_w(0).h(ROW_H).items_center()
+  return h_flex().flex_1().min_w(0).h(rowHeight()).items_center()
     .when(Boolean(bg), (e) => e.bg(bg))
     .when(options.borderLeft, (e) => e.border_l(1).border_color(t.border))
     .child(numberCell(side.no, t))
@@ -61,7 +65,7 @@ function cell(side, t, options) {
 function pairRow(row, t) {
   const leftKind = row.left?.kind;
   const rightKind = row.right?.kind;
-  return h_flex().w_full().h(ROW_H).flex_none()
+  return h_flex().w_full().h(rowHeight()).flex_none()
     .child(cell(row.left, t, {
       bg: leftKind === "del" ? t.ansi1 + "16" : null,
       tone: t.ansi1,
@@ -76,8 +80,8 @@ function pairRow(row, t) {
 }
 
 function hunkRow(text, t) {
-  return h_flex().w_full().h(ROW_H).flex_none().px(8).items_center().bg(t.raised).border_y(1).border_color(t.border)
-    .child(div().text_size(10).text_color(t.dim).truncate().child(text));
+  return h_flex().w_full().h(rowHeight()).flex_none().px(8).items_center().bg(t.raised).border_y(1).border_color(t.border)
+    .child(div().text_size(fs(11)).text_color(t.dim).truncate().child(text));
 }
 
 /**
@@ -90,13 +94,13 @@ function hunkRow(text, t) {
 export function renderDiff(rows, t, id, contentWidth, fontFamily = "monospace") {
   if (!rows.length) {
     return div().size_full().flex().items_center().justify_center()
-      .child(div().text_size(12).text_color(t.dim).child("没有可显示的文本差异"));
+      .child(div().text_size(fs(13)).text_color(t.dim).child("没有可显示的文本差异"));
   }
   return div().size_full().relative().font_family(fontFamily)
     // 横向滚动条常驻，避免只能靠触控板横滑才发现能左右看。
     .child(div().id(`${id}-x`).size_full().overflow_x_scrollbar().mode("always")
       .child(div().min_w(contentWidth).h_full().child(
-        v_virtual_list(id, rows.length, ROW_H, (i) => String(i),
+        v_virtual_list(id, rows.length, rowHeight(), (i) => String(i),
           (range) => rows.slice(range.start, range.end).map((row) =>
             row.kind === "hunk" ? hunkRow(row.text, t) : pairRow(row, t))).size_full())))
     .child(Scrollbar.vertical(id).viewport_from_layout().absolute().inset_0());
@@ -109,17 +113,17 @@ export function renderDiff(rows, t, id, contentWidth, fontFamily = "monospace") 
  */
 export function paneRow(row, side, t) {
   if (row.kind === "hunk") {
-    return h_flex().w_full().h(ROW_H).flex_none().px(8).items_center().bg(t.raised).border_y(1).border_color(t.border)
-      .child(div().text_size(10).text_color(t.dim).truncate().child(row.text));
+    return h_flex().w_full().h(rowHeight()).flex_none().px(8).items_center().bg(t.raised).border_y(1).border_color(t.border)
+      .child(div().text_size(fs(11)).text_color(t.dim).truncate().child(row.text));
   }
   const cellSide = row[side];
   const tone = side === "left" ? t.ansi1 : t.ansi2;
   if (!cellSide) {
-    return h_flex().w_full().h(ROW_H).flex_none().bg(t.raised)
-      .child(div().w(38).flex_none())
+    return h_flex().w_full().h(rowHeight()).flex_none().bg(t.raised)
+      .child(div().w(fs(38)).flex_none())
       .child(div().flex_1().min_w(0));
   }
-  return h_flex().w_full().h(ROW_H).flex_none().items_center()
+  return h_flex().w_full().h(rowHeight()).flex_none().items_center()
     .when(cellSide.kind === (side === "left" ? "del" : "add"), (e) => e.bg(tone + "16"))
     .child(numberCell(cellSide.no, t))
     .child(segments(cellSide, t, tone));
@@ -133,14 +137,14 @@ export function paneWidth(rows, side) {
     const length = row[side]?.text?.length ?? 0;
     if (length > max) max = length;
   }
-  return Math.max(320, max * 7.2 + 70);
+  return Math.max(fs(320), max * fs(7.8) + fs(70));
 }
 
 /** 文件 diff 头部条。 */
 export function diffHeader(name, stats, t, right = null) {
   return h_flex().w_full().h(32).flex_none().px(10).gap(8).items_center().border_b(1).border_color(t.border).bg(t.chrome)
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.foreground).child(name))
-    .when(stats && stats.add > 0, (e) => e.child(div().text_size(10).text_color(t.ansi2).child(`+${stats.add}`)))
-    .when(stats && stats.del > 0, (e) => e.child(div().text_size(10).text_color(t.ansi1).child(`−${stats.del}`)))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(t.foreground).child(name))
+    .when(stats && stats.add > 0, (e) => e.child(div().text_size(fs(11)).text_color(t.ansi2).child(`+${stats.add}`)))
+    .when(stats && stats.del > 0, (e) => e.child(div().text_size(fs(11)).text_color(t.ansi1).child(`−${stats.del}`)))
     .when(Boolean(right), (e) => e.child(right));
 }

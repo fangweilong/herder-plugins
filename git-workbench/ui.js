@@ -2,6 +2,7 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
+import { fs } from "./text.js";
 
 /** 文件状态色：A 绿、D 红、U 红、R 蓝、其他强调色。 */
 export function statusColor(letter, t) {
@@ -25,7 +26,7 @@ export function textButton(id, label, t, onClick, options = {}) {
     .rounded(7)
     .bg(bg)
     .text_color(fg)
-    .text_size(small ? 11 : 12)
+    .text_size(fs(small ? 12 : 13))
     .when(!disabled, (e) => e.cursor_pointer().hover((s) => s.bg(primary ? t.solid : active ? t.hover : t.hover)))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .when(!disabled && onClick, (e) => e.on_click((_e, cx) => onClick(cx)))
@@ -45,7 +46,7 @@ export function chip(text, color, t, options = {}) {
     .border_1()
     .border_color(options.border ?? t.border)
     .text_color(color)
-    .text_size(10)
+    .text_size(fs(11))
     .when(options.truncate, (e) => e.max_w(140).truncate())
     .child(text);
 }
@@ -53,7 +54,7 @@ export function chip(text, color, t, options = {}) {
 /** 分组标题。 */
 export function sectionTitle(label, t, right = null) {
   const row = h_flex().w_full().h(26).flex_none().px(10).items_center().gap(6)
-    .child(div().text_size(10).font_semibold().text_color(t.dim).child(label.toUpperCase()))
+    .child(div().text_size(fs(11)).font_semibold().text_color(t.dim).child(label.toUpperCase()))
     .child(div().flex_1());
   if (right) row.child(right);
   return row;
@@ -62,14 +63,14 @@ export function sectionTitle(label, t, right = null) {
 /** 居中空状态。 */
 export function emptyState(title, hint, t) {
   return v_flex().size_full().items_center().justify_center().gap(6).p(24)
-    .child(div().text_size(13).text_color(t.muted).child(title))
-    .when(Boolean(hint), (e) => e.child(div().text_size(11).text_color(t.dim).child(hint)));
+    .child(div().text_size(fs(13)).text_color(t.muted).child(title))
+    .when(Boolean(hint), (e) => e.child(div().text_size(fs(12)).text_color(t.dim).child(hint)));
 }
 
 /** 错误条。 */
 export function errorBar(text, t) {
   return h_flex().w_full().flex_none().px(10).py(6).gap(6).items_center().bg(t.ansi1 + "14").border_b(1).border_color(t.border)
-    .child(div().text_size(11).text_color(t.ansi1).child(text));
+    .child(div().text_size(fs(12)).text_color(t.ansi1).child(text));
 }
 
 /** 把长路径压成 "父目录/文件名"，父目录省略到两段。 */
@@ -87,7 +88,7 @@ export function shortPath(path, max = 48) {
 /** 数字增减的紧凑显示。 */
 export function addDel(add, del, t) {
   return h_flex().gap(5).items_center()
-    .when(add > 0, (e) => e.child(div().text_size(10).text_color(t.ansi2).child(`+${add}`)))
-    .when(del > 0, (e) => e.child(div().text_size(10).text_color(t.ansi1).child(`−${del}`)));
+    .when(add > 0, (e) => e.child(div().text_size(fs(11)).text_color(t.ansi2).child(`+${add}`)))
+    .when(del > 0, (e) => e.child(div().text_size(fs(11)).text_color(t.ansi1).child(`−${del}`)));
 }
 

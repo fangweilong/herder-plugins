@@ -2,10 +2,10 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState } from "gpui-base";
-import { settings } from "herdr";
 import * as git from "../git.js";
 import { relativeTime } from "../git-parse.js";
 import { emptyState, errorBar, textButton } from "../ui.js";
+import { fs, monoFontFamily } from "../text.js";
 
 const FILE_ROWS = 300;
 // 逐行渲染整个文件会撞上元素数量上限（约两千行时渲染被中断），按页显示。
@@ -132,18 +132,18 @@ function filePicker(v, state, t, cx) {
     .bg(t.popover).border_1().border_color(t.border).p(4)
     .child(div().h(26).px(6).flex().items_center().rounded(6).bg(t.input).border_1().border_color(t.border)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .child(Input.new(state.filter).h_full().text_size(11).text_color(t.foreground)))
+      .child(Input.new(state.filter).h_full().text_size(fs(12)).text_color(t.foreground)))
     .child(div().id("blame-file-menu-x").w_full().max_h(280).overflow_y_scrollbar()
-      .when(state.filesLoading && !state.files.length, (e) => e.child(div().p(8).text_size(11).text_color(t.dim).child("读取文件…")))
-      .when(Boolean(state.filesError), (e) => e.child(div().p(8).text_size(11).text_color(t.ansi1).child(state.filesError)))
-      .when(!state.filesLoading && !state.files.length && !state.filesError, (e) => e.child(div().p(8).text_size(11).text_color(t.dim).child("没有文件")))
-      .when(!matched.length && Boolean(state.files.length), (e) => e.child(div().p(8).text_size(11).text_color(t.dim).child("没有匹配的文件")))
+      .when(state.filesLoading && !state.files.length, (e) => e.child(div().p(8).text_size(fs(12)).text_color(t.dim).child("读取文件…")))
+      .when(Boolean(state.filesError), (e) => e.child(div().p(8).text_size(fs(12)).text_color(t.ansi1).child(state.filesError)))
+      .when(!state.filesLoading && !state.files.length && !state.filesError, (e) => e.child(div().p(8).text_size(fs(12)).text_color(t.dim).child("没有文件")))
+      .when(!matched.length && Boolean(state.files.length), (e) => e.child(div().p(8).text_size(fs(12)).text_color(t.dim).child("没有匹配的文件")))
       .children(shown.map((path) => h_flex().id(`blame-file-${path}`).w_full().h(26).flex_none().px(6).gap(6).items_center()
         .rounded(5).when(path === state.path, (e) => e.bg(t.selected)).cursor_pointer()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => chooseFile(v, path, cx))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(path))))
-      .when(matched.length > shown.length, (e) => e.child(div().p(6).text_size(10).text_color(t.dim)
+        .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(t.muted).child(path))))
+      .when(matched.length > shown.length, (e) => e.child(div().p(6).text_size(fs(11)).text_color(t.dim)
         .child(`仅显示前 ${FILE_ROWS} 个，继续输入以缩小范围`))));
 }
 
@@ -152,11 +152,11 @@ function lineRow(v, line, t, cx) {
   return h_flex().id(`blame-${line.line}`).w_full().h(20).flex_none().items_center().gap(6).px(8)
     .hover((style) => style.bg(t.hover)).cursor_pointer()
     .on_click((_e, cx) => v.showCommit({ hash: line.hash, short: line.short, subject: line.summary, author: line.author, date: new Date(line.time * 1000).toISOString(), refs: [], parents: [] }, cx))
-    .child(div().w(58).flex_none().text_size(9).text_color(color).font_family(settings().font_family ?? "monospace").child(line.short))
-    .child(div().w(90).flex_none().truncate().text_size(9).text_color(t.muted).child(line.author))
-    .child(div().w(58).flex_none().text_size(9).text_color(t.dim).child(relativeTime(line.time)))
-    .child(div().w(34).flex_none().text_size(9).text_color(t.dim).child(String(line.line)))
-    .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.foreground).font_family(settings().font_family ?? "monospace").child(line.code || " "));
+    .child(div().w(58).flex_none().text_size(fs(10)).text_color(color).font_family(monoFontFamily()).child(line.short))
+    .child(div().w(90).flex_none().truncate().text_size(fs(10)).text_color(t.muted).child(line.author))
+    .child(div().w(58).flex_none().text_size(fs(10)).text_color(t.dim).child(relativeTime(line.time)))
+    .child(div().w(34).flex_none().text_size(fs(10)).text_color(t.dim).child(String(line.line)))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(11)).text_color(t.foreground).font_family(monoFontFamily()).child(line.code || " "));
 }
 
 export function renderBlame(v, t, cx) {
@@ -170,25 +170,25 @@ export function renderBlame(v, t, cx) {
         .bg(t.input).border_1().border_color(state.open ? t.accent : t.border).cursor_pointer()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => openPicker(v, cx))
-        .child(div().flex_1().min_w(0).truncate().text_size(11)
+        .child(div().flex_1().min_w(0).truncate().text_size(fs(12))
           .text_color(state.path ? t.foreground : t.dim).child(state.path || (state.filesLoading ? "读取文件…" : "选择文件")))
-        .child(div().text_size(9).text_color(t.dim).child("▾")))
+        .child(div().text_size(fs(10)).text_color(t.dim).child("▾")))
       .child(textButton("blame-run", state.loading ? "加载中…" : "查看", t, (cx) => loadBlame(v, cx),
         { small: true, primary: true, disabled: state.loading })))
     .child(h_flex().gap(6).items_center()
       .child(div().flex_1().min_w(0).h(26).px(7).flex().items_center().rounded(6).bg(t.input).border_1().border_color(t.border)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .child(Input.new(state.rev).h_full().text_size(11).text_color(t.foreground)))
+        .child(Input.new(state.rev).h_full().text_size(fs(12)).text_color(t.foreground)))
       .when(total > PAGE_ROWS, (e) => e
-        .child(div().id("blame-prev").text_size(11).text_color(state.page > 0 ? t.accent : t.dim)
+        .child(div().id("blame-prev").text_size(fs(12)).text_color(state.page > 0 ? t.accent : t.dim)
           .cursor_pointer().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => setPage(v, state.page - 1, cx)).child("‹"))
-        .child(div().text_size(9).text_color(t.dim).child(`${start + 1}–${Math.min(total, start + PAGE_ROWS)} / ${total}`))
-        .child(div().id("blame-next").text_size(11).text_color(start + PAGE_ROWS < total ? t.accent : t.dim)
+        .child(div().text_size(fs(10)).text_color(t.dim).child(`${start + 1}–${Math.min(total, start + PAGE_ROWS)} / ${total}`))
+        .child(div().id("blame-next").text_size(fs(12)).text_color(start + PAGE_ROWS < total ? t.accent : t.dim)
           .cursor_pointer().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => setPage(v, state.page + 1, cx)).child("›")))
-      .child(div().text_size(10).text_color(t.dim).child(state.loading ? "" : `${total} 行`)))
-    .when(Boolean(state.note), (e) => e.child(div().text_size(10).text_color(t.dim).child(state.note)));
+      .child(div().text_size(fs(11)).text_color(t.dim).child(state.loading ? "" : `${total} 行`)))
+    .when(Boolean(state.note), (e) => e.child(div().text_size(fs(11)).text_color(t.dim).child(state.note)));
 
   return v_flex().size_full().min_h(0).bg(t.background).relative()
     .child(header)

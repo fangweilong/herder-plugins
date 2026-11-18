@@ -3,12 +3,13 @@
 
 import { div } from "gpui-kit";
 import { h_flex, h_resizable, resizable_panel, v_flex } from "gpui-base";
-import { focused, panes, run, setShared, settings, shared, spaces } from "herdr";
+import { focused, panes, run, setShared, shared, spaces } from "herdr";
 import * as git from "../git.js";
 import { diffStats } from "../git.js";
 import { repoName } from "../git-parse.js";
 import { emptyState, shortPath } from "../ui.js";
-import { ROW_H, buildDiffRows, paneRow, paneWidth } from "./diff-view.js";
+import { buildDiffRows, paneRow, paneWidth, rowHeight } from "./diff-view.js";
+import { fs, monoFontFamily, uiFontFamily } from "../text.js";
 
 export const STAGE_TAB = "Git 对比";
 const SHARED_TARGET = "git-workbench.compare-target";
@@ -204,7 +205,7 @@ function viewCount(state, side) {
 }
 
 function maxTop(state) {
-  return Math.max(0, (state.diff?.rows?.length ?? 0) * ROW_H - (state.viewH || 0));
+  return Math.max(0, (state.diff?.rows?.length ?? 0) * rowHeight() - (state.viewH || 0));
 }
 
 function maxX(state, side) {
@@ -269,7 +270,7 @@ function jump(v, side, axis, pos, cx, independent = false) {
   const state = v.stage;
   if (!state.diff) return;
   if (axis === "y") {
-    const total = state.diff.rows.length * ROW_H;
+    const total = state.diff.rows.length * rowHeight();
     const view = state.viewH || 0;
     if (total <= view || view <= 0) return;
     const thumb = Math.max(24, (view * view) / total);
@@ -311,7 +312,7 @@ function endDrag(v, cx) {
 
 function scrollbarEl(v, side, t, axis, cx) {
   const state = v.stage;
-  const total = axis === "y" ? (state.diff?.rows?.length ?? 0) * ROW_H : contentWidth(state, side);
+  const total = axis === "y" ? (state.diff?.rows?.length ?? 0) * rowHeight() : contentWidth(state, side);
   const view = axis === "y" ? (state.viewH || 0) : viewCount(state, side);
   if (total <= view || view <= 0) return div();
   const offset = axis === "y" ? state.top : state[xKey(side)];
@@ -359,18 +360,18 @@ function paneEl(v, side, t, cx) {
   // 内容比视口窄时铺满，hunk 标题和空白行才不会只占左半边。
   const painted = Math.max(width, viewCount(state, side));
   const x = Math.max(0, Math.min(state[xKey(side)] ?? 0, maxX(state, side)));
-  const start = Math.max(0, Math.floor(state.top / ROW_H));
-  const offset = state.top - start * ROW_H;
-  const count = Math.ceil((state.viewH || 0) / ROW_H) + 2;
+  const start = Math.max(0, Math.floor(state.top / rowHeight()));
+  const offset = state.top - start * rowHeight();
+  const count = Math.ceil((state.viewH || 0) / rowHeight()) + 2;
   const visible = rows.slice(start, Math.min(rows.length, start + count));
   const label = paneLabel(state.target, side);
   return v_flex().id(`stage-pane-${side}`).size_full().min_h(0)
     .child(h_flex().w_full().h(PANE_HEAD_H).flex_none().px(8).gap(6).items_center().bg(t.chrome).border_b(1).border_color(t.border)
-      .child(div().flex_none().text_size(9).text_color(side === "left" ? t.ansi1 : t.ansi2).child(side === "left" ? "旧版" : "新版"))
-      .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.muted).child(label))
+      .child(div().flex_none().text_size(fs(10)).text_color(side === "left" ? t.ansi1 : t.ansi2).child(side === "left" ? "旧版" : "新版"))
+      .child(div().flex_1().min_w(0).truncate().text_size(fs(11)).text_color(t.muted).child(label))
       .tooltip(label))
     .child(div().flex_1().min_h(0).relative().overflow_hidden()
-      .font_family(settings().font_family ?? "monospace")
+      .font_family(monoFontFamily())
       .on_size_change((size, cx2) => onSize(v, side, size, cx2))
       .on_scroll_wheel((e, cx2) => onWheel(v, side, e, cx2))
       .on_mouse_move((e, cx2) => dragMove(v, side, e, cx2))
@@ -400,17 +401,18 @@ export function renderStage(v, t, cx) {
     ? (sideEmpty(rows, "left") ? "right" : sideEmpty(rows, "right") ? "left" : null)
     : null;
   const head = h_flex().w_full().h(38).flex_none().px(12).gap(10).items_center().border_b(1).border_color(t.border).bg(t.chrome)
-    .child(div().text_size(11).font_semibold().text_color(t.muted).child("Git 对比"))
-    .when(Boolean(v.repo), (e) => e.child(div().text_size(10).text_color(t.dim).child(v.repo.name)))
+    .child(div().text_size(fs(12)).font_semibold().text_color(t.muted).child("Git 对比"))
+    .when(Boolean(v.repo), (e) => e.child(div().text_size(fs(11)).text_color(t.dim).child(v.repo.name)))
     .when(Boolean(target), (e) => e
-      .child(div().text_size(11).text_color(t.foreground).child(shortPath(target.path, 90)))
-      .when(Boolean(target.label), (e2) => e2.child(div().text_size(10).text_color(t.dim).child(target.label))))
+      .child(div().text_size(fs(12)).text_color(t.foreground).child(shortPath(target.path, 90)))
+      .when(Boolean(target.label), (e2) => e2.child(div().text_size(fs(11)).text_color(t.dim).child(target.label))))
     .child(div().flex_1())
-    .when(Boolean(state.diff) && !single, (e) => e.child(div().text_size(9).text_color(t.dim).child("Alt+滚轮可单独滚动一侧")))
-    .when(Boolean(state.diff?.stats?.add), (e) => e.child(div().text_size(10).text_color(t.ansi2).child(`+${state.diff.stats.add}`)))
-    .when(Boolean(state.diff?.stats?.del), (e) => e.child(div().text_size(10).text_color(t.ansi1).child(`−${state.diff.stats.del}`)));
+    .when(Boolean(state.diff) && !single, (e) => e.child(div().text_size(fs(10)).text_color(t.dim).child("Alt+滚轮可单独滚动一侧")))
+    .when(Boolean(state.diff?.stats?.add), (e) => e.child(div().text_size(fs(11)).text_color(t.ansi2).child(`+${state.diff.stats.add}`)))
+    .when(Boolean(state.diff?.stats?.del), (e) => e.child(div().text_size(fs(11)).text_color(t.ansi1).child(`−${state.diff.stats.del}`)));
 
-  return v_flex().id(v.stageDiffId).size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12)
+  return v_flex().id(v.stageDiffId).size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(fs(13))
+    .when(Boolean(uiFontFamily()), (e) => e.font_family(uiFontFamily()))
     .child(head)
     .child(div().flex_1().min_h(0).relative()
       .on_size_change((size, cx2) => {
@@ -422,9 +424,9 @@ export function renderStage(v, t, cx) {
       .when(!target, (e) => e.child(div().absolute().inset_0()
         .child(emptyState("还没有对比目标", "在侧栏选择文件后点「主区域打开」，之后切换文件会自动跟随", t))))
       .when(state.loading, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child("加载 diff…"))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child("加载 diff…"))))
       .when(!state.loading && Boolean(state.error || state.diff?.error), (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child(state.error || state.diff.error))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child(state.error || state.diff.error))))
       .when(!state.loading && !state.error && Boolean(state.diff) && !state.diff.error,
         (e) => e.child(single ? paneEl(v, single, t, cx) : renderSplit(v, t, cx))));
 }

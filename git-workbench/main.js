@@ -23,6 +23,7 @@ import { createCompareState, ensureCompare, openCompareStage, renderCompareDetai
 import { createStageState, ensureStage, followEnabled, renderStage, setFollowEnabled } from "./views/stage.js";
 import { createBlameState, ensureBlame, renderBlame, showBlame as openBlame } from "./views/blame.js";
 import { textButton } from "./ui.js";
+import { fs, uiFontFamily } from "./text.js";
 
 const VIEWS = [
   { id: "log", label: "历史" },
@@ -337,7 +338,7 @@ export default class GitWorkbench extends View {
     if (this.stageMode) return renderStage(this, t, cx);
     if (this.locating && !this.repo) return this.frame(t, simpleState("正在定位 Git 仓库…", t));
     if (!this.repo) return this.frame(t, v_flex().size_full().items_center().justify_center().gap(10)
-      .child(div().text_size(13).text_color(t.muted).child(this.error || "没有可用的仓库"))
+      .child(div().text_size(fs(13)).text_color(t.muted).child(this.error || "没有可用的仓库"))
       .child(textButton("pick-repo", "选择仓库…", t, (cx) => this.locateOther(cx))));
 
     let left = simpleState("该视图尚未接线", t);
@@ -372,19 +373,21 @@ export default class GitWorkbench extends View {
 
   frame(t, body, cx = null) {
     const closeable = Boolean(props()?.overlay);
+    // 界面字体默认取 Herdr；为空表示沿用宿主默认，不要传空字符串。
+    const font = uiFontFamily();
     const title = h_flex().w_full().h(42).flex_none().px(12).gap(10).items_center().border_b(1).border_color(t.border).bg(t.chrome)
-      .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Git"))
+      .child(div().text_size(fs(13)).font_semibold().text_color(t.foreground).child("Git"))
       .when(Boolean(this.repo), (e) => e
-        .child(div().id("repo-name").text_size(12).text_color(t.muted).cursor_pointer()
+        .child(div().id("repo-name").text_size(fs(13)).text_color(t.muted).cursor_pointer()
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => this.locateOther(cx))
           .child(this.repo.name))
-        .child(div().text_size(10).text_color(t.dim).truncate().child(this.repo.branch ?? "游离 HEAD"))
-        .when(Boolean(this.repo.head), (e) => e.child(div().text_size(10).text_color(t.dim).child(`@ ${this.repo.head}`))))
+        .child(div().text_size(fs(11)).text_color(t.dim).truncate().child(this.repo.branch ?? "游离 HEAD"))
+        .when(Boolean(this.repo.head), (e) => e.child(div().text_size(fs(11)).text_color(t.dim).child(`@ ${this.repo.head}`))))
       .child(div().flex_1())
       .children(VIEWS.map((view) => h_flex().id(`view-${view.id}`).h(26).px(9).items_center().rounded(6)
         .when(this.view === view.id, (style) => style.bg(t.selected))
-        .text_size(11).text_color(this.view === view.id ? t.foreground : t.muted)
+        .text_size(fs(12)).text_color(this.view === view.id ? t.foreground : t.muted)
         .cursor_pointer().hover((style) => style.bg(this.view === view.id ? t.selected : t.hover))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => this.setView(view.id, cx)).child(view.label)))
@@ -396,7 +399,9 @@ export default class GitWorkbench extends View {
       .when(closeable, (e) => e.child(textButton("git-close", "✕", t, () => closeOverlay(props().overlay), { small: true })));
 
     const root = v_flex().id("git-workbench").size_full().min_h(0).rounded(10).overflow_hidden()
-      .bg(t.background).text_color(t.foreground).text_size(12).track_focus(this.handle)
+      .bg(t.background).text_color(t.foreground).text_size(fs(13))
+      .when(Boolean(font), (e) => e.font_family(font))
+      .track_focus(this.handle)
       .on_size_change((size, cx) => {
         const narrow = size.width < 760;
         if (narrow !== this.narrow) {
@@ -419,13 +424,13 @@ export default class GitWorkbench extends View {
 
   statusBar(t) {
     return h_flex().w_full().h(24).flex_none().px(10).gap(8).items_center().border_t(1).border_color(t.border).bg(t.chrome)
-      .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(this.noteText.startsWith("失败") ? t.ansi1 : t.dim)
+      .child(div().flex_1().min_w(0).truncate().text_size(fs(11)).text_color(this.noteText.startsWith("失败") ? t.ansi1 : t.dim)
         .child(this.noteText || (this.repo ? this.repo.root : "")))
-      .child(div().id("gw-follow").text_size(10).text_color(followEnabled() ? t.accent : t.dim).cursor_pointer()
+      .child(div().id("gw-follow").text_size(fs(11)).text_color(followEnabled() ? t.accent : t.dim).cursor_pointer()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { setFollowEnabled(!followEnabled()); cx.notify(); })
         .child(followEnabled() ? "主区域跟随 ✓" : "主区域跟随"))
-      .child(div().text_size(10).text_color(t.dim).child(this.docked ? "自动刷新 · 拖左边缘调宽" : "自动刷新 · Esc 关闭"));
+      .child(div().text_size(fs(11)).text_color(t.dim).child(this.docked ? "自动刷新 · 拖左边缘调宽" : "自动刷新 · Esc 关闭"));
   }
 
   confirmOverlay(t, cx) {
@@ -433,11 +438,11 @@ export default class GitWorkbench extends View {
     return div().id("confirm-backdrop").absolute().inset_0().flex().items_center().justify_center().bg("#00000066")
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(v_flex().w(460).p(16).gap(10).rounded(10).bg(t.popover).border_1().border_color(t.border)
-        .child(div().text_size(13).font_semibold().text_color(spec.danger ? t.ansi1 : t.foreground).child(spec.title))
-        .when(Boolean(spec.body), (e) => e.child(div().text_size(11).text_color(t.muted).child(spec.body)))
+        .child(div().text_size(fs(13)).font_semibold().text_color(spec.danger ? t.ansi1 : t.foreground).child(spec.title))
+        .when(Boolean(spec.body), (e) => e.child(div().text_size(fs(12)).text_color(t.muted).child(spec.body)))
         .when(Boolean(this.confirmInput), (e) => e.child(h_flex().h(30).px(8).items_center().rounded(6).bg(t.input).border_1().border_color(t.border)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-          .child(Input.new(this.confirmInput).h_full().text_size(11).text_color(t.foreground))))
+          .child(Input.new(this.confirmInput).h_full().text_size(fs(12)).text_color(t.foreground))))
         .child(h_flex().gap(8).justify_end()
           .child(textButton("confirm-cancel", "取消", t, (cx) => { this.confirm = null; this.confirmInput = null; cx.notify(); }, { small: true }))
           .child(textButton("confirm-ok", this.confirmBusy ? "执行中…" : "确定", t, (cx) => this.runConfirm(cx),
@@ -447,7 +452,7 @@ export default class GitWorkbench extends View {
 
 function simpleState(text, t) {
   return v_flex().size_full().items_center().justify_center().p(20)
-    .child(div().text_size(12).text_color(t.dim).child(text));
+    .child(div().text_size(fs(13)).text_color(t.dim).child(text));
 }
 
 function delay(cx, ms) {

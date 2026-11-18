@@ -2,13 +2,15 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { settings } from "herdr";
 import * as git from "../git.js";
 import { diffStats, loadCommitFiles, loadCommitMeta } from "../git.js";
 import { relativeTime } from "../git-parse.js";
+import { fileTreeRows } from "../tree.js";
 import { addDel, chip, emptyState, errorBar, shortPath, statusColor, textButton } from "../ui.js";
 import { buildDiffRows, diffContentWidth, diffHeader, renderDiff } from "./diff-view.js";
+import { dirRow, isDirCollapsed, toggleDir } from "./file-tree.js";
 import { showInStage, syncStage } from "./stage.js";
+import { fs, monoFontFamily } from "../text.js";
 
 export function createBranchesState() {
   return {
@@ -23,6 +25,7 @@ export function createBranchesState() {
     commitSeq: {},   // branchKey -> generation
     openCommits: {}, // hash -> true
     files: {},       // hash -> { loading, loaded, error, items, meta }
+    collapsed: {},   // 目录收起状态，按提交区分，见 file-tree.js
     selectedCommit: null,
     selectedFile: null,
     diff: null,
@@ -253,23 +256,23 @@ function branchRow(v, branch, t, cx) {
   return h_flex().id(`branch-${branch.kind}-${branch.name}`).w_full().h(36).flex_none().gap(5).px(8)
     .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
     .cursor_pointer().on_click((_e, cx) => toggleBranch(v, branch, cx))
-    .child(div().w(10).flex_none().text_size(9).text_color(t.dim).child(open ? "▾" : "▸"))
-    .child(div().w(10).flex_none().text_size(10).text_color(branch.current ? t.accent : branch.kind === "remote" ? t.dim : t.muted)
+    .child(div().w(10).flex_none().text_size(fs(10)).text_color(t.dim).child(open ? "▾" : "▸"))
+    .child(div().w(10).flex_none().text_size(fs(11)).text_color(branch.current ? t.accent : branch.kind === "remote" ? t.dim : t.muted)
       .child(branch.current ? "●" : branch.kind === "tag" ? "▣" : "○"))
     .child(v_flex().flex_1().min_w(0).gap(1)
       .child(h_flex().w_full().gap(4).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(branch.current ? t.foreground : t.muted).child(branch.name))
-        .when(branch.ahead > 0, (e) => e.child(div().text_size(9).text_color(t.ansi2).child(`↑${branch.ahead}`)))
-        .when(branch.behind > 0, (e) => e.child(div().text_size(9).text_color(t.ansi1).child(`↓${branch.behind}`)))
+        .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(branch.current ? t.foreground : t.muted).child(branch.name))
+        .when(branch.ahead > 0, (e) => e.child(div().text_size(fs(10)).text_color(t.ansi2).child(`↑${branch.ahead}`)))
+        .when(branch.behind > 0, (e) => e.child(div().text_size(fs(10)).text_color(t.ansi1).child(`↓${branch.behind}`)))
         .when(branch.current, (e) => e.child(chip("当前", t.accent, t, { bg: t.accent + "18" }))))
-      .child(div().w_full().truncate().text_size(9).text_color(t.dim)
+      .child(div().w_full().truncate().text_size(fs(10)).text_color(t.dim)
         .child([relativeTime(branch.date), branch.author, branch.subject].filter(Boolean).join(" · "))))
     .tooltip([branch.name, branch.hash, branch.author, branch.date, branch.subject].filter(Boolean).join(" · "));
 }
 
 function treeNote(text, t) {
   return h_flex().w_full().h(24).flex_none().pl(28).pr(8).items_center()
-    .child(div().text_size(10).text_color(t.dim).child(text));
+    .child(div().text_size(fs(11)).text_color(t.dim).child(text));
 }
 
 function commitRow(v, key, commit, t, cx) {
@@ -279,23 +282,26 @@ function commitRow(v, key, commit, t, cx) {
   return h_flex().id(`branch-commit-${key}-${commit.hash}`).w_full().h(30).flex_none().gap(5).pl(24).pr(8)
     .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
     .cursor_pointer().on_click((_e, cx) => expandCommit(v, commit, cx))
-    .child(div().w(10).flex_none().text_size(9).text_color(t.dim).child(open ? "▾" : "▸"))
-    .child(div().w(8).flex_none().text_size(9).text_color(commit.merge ? t.ansi3 : t.dim).child(commit.merge ? "⑂" : "●"))
-    .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(selected ? t.foreground : t.muted).child(commit.subject || "(无提交信息)"))
-    .child(div().max_w(76).truncate().flex_none().text_size(9).text_color(t.dim).child(commit.author || ""))
-    .child(div().flex_none().text_size(9).text_color(t.dim).child(relativeTime(commit.date)))
-    .child(div().flex_none().text_size(9).text_color(t.dim).child(commit.short))
+    .child(div().w(10).flex_none().text_size(fs(10)).text_color(t.dim).child(open ? "▾" : "▸"))
+    .child(div().w(8).flex_none().text_size(fs(10)).text_color(commit.merge ? t.ansi3 : t.dim).child(commit.merge ? "⑂" : "●"))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(selected ? t.foreground : t.muted).child(commit.subject || "(无提交信息)"))
+    .child(div().max_w(76).truncate().flex_none().text_size(fs(10)).text_color(t.dim).child(commit.author || ""))
+    .child(div().flex_none().text_size(fs(10)).text_color(t.dim).child(relativeTime(commit.date)))
+    .child(div().flex_none().text_size(fs(10)).text_color(t.dim).child(commit.short))
     .tooltip([commit.short, commit.author, commit.date, commit.subject].filter(Boolean).join(" · "));
 }
 
-function fileRow(v, key, commit, file, t, cx) {
+function fileRow(v, key, commit, entry, t, cx) {
+  const file = entry.file;
   const state = v.branches;
   const selected = state.selectedFile === file.path;
-  return h_flex().id(`branch-file-${key}-${commit.hash}-${file.path}`).w_full().h(24).flex_none().gap(5).pl(42).pr(8)
+  return h_flex().id(`branch-file-${key}-${commit.hash}-${file.path}`).w_full().h(24).flex_none().gap(5)
+    .pl(42 + entry.depth * 12).pr(8)
     .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
     .cursor_pointer().on_click((_e, cx) => selectFile(v, commit, file.path, cx))
-    .child(div().w(10).flex_none().text_size(9).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
-    .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(selected ? t.foreground : t.muted).child(file.path))
+    .child(div().w(10).flex_none().text_size(fs(10)).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(selected ? t.foreground : t.muted)
+      .child(entry.name).tooltip(file.path))
     .child(addDel(file.add, file.del, t));
 }
 
@@ -305,7 +311,7 @@ function treeRows(v, state, t, cx) {
     const items = state.list.filter((branch) => branch.kind === kind);
     if (!items.length) continue;
     rows.push(h_flex().w_full().h(30).flex_none().px(8).gap(6).items_center().bg(t.chrome)
-      .child(div().text_size(10).font_semibold().text_color(t.dim).child(`${label} (${items.length})`)));
+      .child(div().text_size(fs(11)).font_semibold().text_color(t.dim).child(`${label} (${items.length})`)));
     for (const branch of items) {
       const key = branchKey(branch);
       rows.push(branchRow(v, branch, t, cx));
@@ -330,7 +336,11 @@ function treeRows(v, state, t, cx) {
         if (!files || files.loading) rows.push(treeNote("加载文件…", t));
         else if (files.error) rows.push(treeNote(files.error, t));
         else if (!files.items.length) rows.push(treeNote("没有文件改动", t));
-        else rows.push(...files.items.map((file) => fileRow(v, key, commit, file, t, cx)));
+        else rows.push(...fileTreeRows(files.items, (dir) => isDirCollapsed(state.collapsed, commit.hash, dir))
+          .map((entry) => entry.kind === "dir"
+            ? dirRow(`branch-${key}`, entry, t,
+              (path, cx) => toggleDir(state.collapsed, commit.hash, path, cx), { indent: 42 })
+            : fileRow(v, key, commit, entry, t, cx)));
       }
     }
   }
@@ -341,8 +351,8 @@ export function renderBranchesList(v, t, cx) {
   const state = v.branches;
   const rows = treeRows(v, state, t, cx);
   const header = h_flex().w_full().flex_none().h(34).px(10).gap(6).items_center().border_b(1).border_color(t.border)
-    .child(div().text_size(11).font_semibold().text_color(t.muted).child("分支"))
-    .child(div().text_size(10).text_color(t.dim).child(`${state.list.length}`))
+    .child(div().text_size(fs(12)).font_semibold().text_color(t.muted).child("分支"))
+    .child(div().text_size(fs(11)).text_color(t.dim).child(`${state.list.length}`))
     .child(div().flex_1())
     .child(textButton("branch-new", "新建", t, (cx) => {
       const selected = state.list.find((item) => branchKey(item) === state.selectedKey);
@@ -355,7 +365,7 @@ export function renderBranchesList(v, t, cx) {
         done: (c2) => refreshBranches(v, c2),
       });
     }, { small: true }))
-    .child(div().id("branch-refresh").text_size(11).text_color(t.muted).cursor_pointer()
+    .child(div().id("branch-refresh").text_size(fs(12)).text_color(t.muted).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => refreshBranches(v, cx)).child("刷新"));
 
@@ -434,7 +444,7 @@ function toolbar(v, branch, t, cx) {
 function commitHeader(v, commit, t, cx) {
   return v_flex().w_full().flex_none().gap(3).px(12).py(8).border_b(1).border_color(t.border).bg(t.chrome)
     .child(h_flex().w_full().gap(8).items_center()
-      .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground)
+      .child(div().flex_1().min_w(0).truncate().text_size(fs(13)).font_semibold().text_color(t.foreground)
         .child(commit.subject || "(无提交信息)"))
       .child(textButton("branch-commit-cherry", "拣选", t, (cx) => v.askAction({
         title: "拣选提交",
@@ -451,11 +461,11 @@ function commitHeader(v, commit, t, cx) {
         done: (c2) => refreshBranches(v, c2),
       }), { small: true, danger: true })))
     .child(h_flex().gap(8).items_center()
-      .child(div().text_size(10).text_color(t.muted).child(commit.author))
-      .child(div().text_size(10).text_color(t.dim).child(relativeTime(commit.date)))
-      .child(div().text_size(10).text_color(t.dim).font_family(settings().font_family ?? "monospace").child(commit.short))
+      .child(div().text_size(fs(11)).text_color(t.muted).child(commit.author))
+      .child(div().text_size(fs(11)).text_color(t.dim).child(relativeTime(commit.date)))
+      .child(div().text_size(fs(11)).text_color(t.dim).font_family(monoFontFamily()).child(commit.short))
       .child(div().flex_1())
-      .child(div().text_size(10).text_color(t.dim).child(commit.parents?.length > 1 ? `${commit.parents.length} 个父提交` : "")));
+      .child(div().text_size(fs(11)).text_color(t.dim).child(commit.parents?.length > 1 ? `${commit.parents.length} 个父提交` : "")));
 }
 
 export function renderBranchesDetail(v, t, cx) {
@@ -471,14 +481,14 @@ export function renderBranchesDetail(v, t, cx) {
   return v_flex().size_full().min_h(0)
     .when(Boolean(branch), (e) => e
       .child(h_flex().w_full().flex_none().h(34).px(10).gap(8).items_center().border_b(1).border_color(t.border).bg(t.chrome)
-        .child(div().text_size(12).font_semibold().text_color(t.foreground).child(branch.name))
+        .child(div().text_size(fs(13)).font_semibold().text_color(t.foreground).child(branch.name))
         .child(chip(branch.kind === "remote" ? "远程" : branch.kind === "tag" ? "标签" : "本地", t.muted, t))
         .when(branch.current, (e) => e.child(chip("当前分支", t.accent, t, { bg: t.accent + "18" })))
         .child(div().flex_1())
-        .when(Boolean(branch.upstream), (e) => e.child(div().text_size(9).text_color(t.dim).child(`↗ ${branch.upstream}`))))
+        .when(Boolean(branch.upstream), (e) => e.child(div().text_size(fs(10)).text_color(t.dim).child(`↗ ${branch.upstream}`))))
       .child(toolbar(v, branch, t, cx)))
     .when(Boolean(state.note), (e) => e.child(h_flex().w_full().flex_none().px(10).py(4)
-      .child(div().text_size(10).text_color(state.note.startsWith("失败") ? t.ansi1 : t.dim).child(state.note))))
+      .child(div().text_size(fs(11)).text_color(state.note.startsWith("失败") ? t.ansi1 : t.dim).child(state.note))))
     .when(Boolean(commit), (e) => e.child(commitHeader(v, commit, t, cx)))
     .when(Boolean(file), (e) => e.child(diffHeader(shortPath(file.path, 72), state.diff?.stats, t,
       textButton("branch-stage-open", "主区域打开", t,
@@ -492,9 +502,9 @@ export function renderBranchesDetail(v, t, cx) {
       .when(Boolean(commit) && !file, (e) => e.child(div().absolute().inset_0()
         .child(emptyState("选择一个文件", "左侧提交下的文件", t))))
       .when(Boolean(file) && state.diffLoading, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child("加载 diff…"))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child("加载 diff…"))))
       .when(Boolean(file) && !state.diffLoading && Boolean(state.diff?.error), (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child(state.diff.error))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child(state.diff.error))))
       .when(Boolean(file) && !state.diffLoading && !state.diff?.error, (e) => e.child(
-        renderDiff(state.diff?.rows ?? [], t, "branch-diff", state.diff?.width ?? 600, settings().font_family ?? "monospace"))));
+        renderDiff(state.diff?.rows ?? [], t, "branch-diff", state.diff?.width ?? 600, monoFontFamily()))));
 }

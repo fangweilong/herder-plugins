@@ -3,12 +3,14 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { settings } from "herdr";
 import * as git from "../git.js";
 import { diffStats } from "../git.js";
+import { fileTreeRows } from "../tree.js";
 import { addDel, emptyState, errorBar, shortPath, statusColor, textButton } from "../ui.js";
 import { buildDiffRows, diffContentWidth, diffHeader, renderDiff } from "./diff-view.js";
+import { dirRow, isDirCollapsed, toggleDir } from "./file-tree.js";
 import { findStageTab, showInStage, syncStage } from "./stage.js";
+import { fs, monoFontFamily } from "../text.js";
 
 const WORKTREE = "";
 
@@ -27,6 +29,7 @@ export function createCompareState() {
     diff: null,
     diffLoading: false,
     note: "",
+    collapsed: {}, // 目录收起状态，按 A/B 组合区分，见 file-tree.js
     token: 0,
     fileToken: 0,
   };
@@ -151,6 +154,24 @@ function selectFile(v, path, cx, explicit = false) {
   });
 }
 
+/** 目录收起的范围：换一组 A/B 时沿用各自的分组状态。 */
+function compareScope(state) {
+  return `${state.a}\0${state.b}`;
+}
+
+function fileRow(v, entry, t, cx) {
+  const file = entry.file;
+  const selected = v.compare.selected === file.path;
+  return h_flex().id(`compare-${file.path}`).w_full().h(26).flex_none().gap(6)
+    .pl(8 + entry.depth * 12).pr(8)
+    .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
+    .cursor_pointer().on_click((_e, cx) => selectFile(v, file.path, cx, true))
+    .child(div().w(11).flex_none().text_size(fs(11)).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
+    .child(div().flex_1().min_w(0).truncate().text_size(fs(13)).text_color(selected ? t.foreground : t.muted)
+      .child(entry.name).tooltip(file.path))
+    .child(addDel(file.add, file.del, t));
+}
+
 /** 下拉选项：HEAD、本地/远程分支、标签；终点多一个“工作区”。 */
 function options(state, kind) {
   const list = [];
@@ -184,14 +205,14 @@ function revRow(state, kind, label, t, cx) {
   const open = state.open === kind;
   const value = labelOf(state, kind);
   return h_flex().w_full().gap(6).items_center()
-    .child(div().w(52).flex_none().text_size(10).text_color(t.dim).child(label))
+    .child(div().w(52).flex_none().text_size(fs(11)).text_color(t.dim).child(label))
     .child(h_flex().id(`compare-${kind}-trigger`).flex_1().min_w(0).h(26).px(7).gap(4).items_center()
       .rounded(6).bg(t.input).border_1().border_color(open ? t.accent : t.border).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => { state.open = open ? null : kind; cx.notify(); })
-      .child(div().flex_1().min_w(0).truncate().text_size(11)
+      .child(div().flex_1().min_w(0).truncate().text_size(fs(12))
         .text_color(value.startsWith("工作区") ? t.dim : t.foreground).child(value))
-      .child(div().text_size(9).text_color(t.dim).child("▾")));
+      .child(div().text_size(fs(10)).text_color(t.dim).child("▾")));
 }
 
 function picker(v, state, kind, t, cx) {
@@ -206,11 +227,11 @@ function picker(v, state, kind, t, cx) {
       .hover((style) => style.bg(t.hover)).cursor_pointer()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => setRevision(v, kind, item.value, cx))
-      .child(div().w(10).flex_none().text_size(9).text_color(item.current ? t.accent : t.dim)
+      .child(div().w(10).flex_none().text_size(fs(10)).text_color(item.current ? t.accent : t.dim)
         .child(item.current ? "●" : item.kind === "tag" ? "▣" : item.kind === "worktree" ? "✎" : "○"))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(item.label))
-      .when(item.kind === "remote", (e) => e.child(div().text_size(9).text_color(t.dim).child("远程")))
-      .when(item.kind === "tag", (e) => e.child(div().text_size(9).text_color(t.dim).child("标签"))))));
+      .child(div().flex_1().min_w(0).truncate().text_size(fs(12)).text_color(t.muted).child(item.label))
+      .when(item.kind === "remote", (e) => e.child(div().text_size(fs(10)).text_color(t.dim).child("远程")))
+      .when(item.kind === "tag", (e) => e.child(div().text_size(fs(10)).text_color(t.dim).child("标签"))))));
 }
 
 export function renderCompareList(v, t, cx) {
@@ -233,24 +254,20 @@ export function renderCompareList(v, t, cx) {
       .child(textButton("compare-stage", "主区域打开", t, (cx) => openCompareStage(v, cx),
         { small: true, primary: true, disabled: state.loading || !state.files.length }))
       .child(div().flex_1())
-      .child(div().text_size(10).text_color(t.dim).child(
+      .child(div().text_size(fs(11)).text_color(t.dim).child(
         state.refsLoading ? "读取分支…" : state.loading ? "" : `${state.files.length} 个文件${findStageTab() ? " · 主区域已跟随" : ""}`)))
-    .when(Boolean(state.note), (e) => e.child(div().text_size(10).text_color(t.dim).child(state.note)));
+    .when(Boolean(state.note), (e) => e.child(div().text_size(fs(11)).text_color(t.dim).child(state.note)));
 
   return v_flex().size_full().min_h(0).relative().bg(t.surface)
     .child(header)
     .when(Boolean(state.error), (e) => e.child(errorBar(state.error, t)))
     .child(div().flex_1().min_h(0).relative()
       .child(div().id("compare-list-x").size_full().overflow_y_scrollbar()
-        .children(state.files.map((file) => {
-          const selected = state.selected === file.path;
-          return h_flex().id(`compare-${file.path}`).w_full().h(26).flex_none().gap(6).px(8)
-            .when(selected, (e) => e.bg(t.selected)).hover((style) => style.bg(selected ? t.selected : t.hover))
-            .cursor_pointer().on_click((_e, cx) => selectFile(v, file.path, cx, true))
-            .child(div().w(11).flex_none().text_size(10).font_semibold().text_color(statusColor(file.status, t)).child(file.status))
-            .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(selected ? t.foreground : t.muted).child(file.path))
-            .child(addDel(file.add, file.del, t));
-        })))
+        .children(fileTreeRows(state.files, (dir) => isDirCollapsed(state.collapsed, compareScope(state), dir)).map((row) =>
+          row.kind === "dir"
+            ? dirRow("compare", row, t,
+              (path, cx) => toggleDir(state.collapsed, compareScope(state), path, cx), { height: 26 })
+            : fileRow(v, row, t, cx))))
       .when(state.loading, (e) => e.child(div().absolute().inset_0().child(emptyState("对比中…", null, t))))
       .when(!state.loading && !state.files.length, (e) => e.child(div().absolute().inset_0()
         .child(emptyState("没有差异", "选择两个不同的分支、标签或提交", t)))))
@@ -267,12 +284,12 @@ export function renderCompareDetail(v, t, cx) {
   const to = state.b || "工作区";
   return v_flex().size_full().min_h(0)
     .child(diffHeader(shortPath(state.selected, 72), state.diff?.stats, t,
-      div().text_size(10).text_color(t.dim).child(`${from} → ${to}`)))
+      div().text_size(fs(11)).text_color(t.dim).child(`${from} → ${to}`)))
     .child(div().flex_1().min_h(0).relative()
       .when(state.diffLoading, (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child("加载 diff…"))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child("加载 diff…"))))
       .when(!state.diffLoading && Boolean(state.diff?.error), (e) => e.child(div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().text_size(11).text_color(t.dim).child(state.diff.error))))
+        .child(div().text_size(fs(12)).text_color(t.dim).child(state.diff.error))))
       .when(!state.diffLoading && !state.diff?.error, (e) => e.child(
-        renderDiff(state.diff?.rows ?? [], t, "compare-diff", state.diff?.width ?? 600, settings().font_family ?? "monospace"))));
+        renderDiff(state.diff?.rows ?? [], t, "compare-diff", state.diff?.width ?? 600, monoFontFamily()))));
 }

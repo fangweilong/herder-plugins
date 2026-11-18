@@ -12,6 +12,8 @@ Herdr 自带的 `changes` 面板只有单栏 diff 和一键提交；这个 mod �
 - **对比**：起点/终点用下拉选择分支、标签或 HEAD；终点可选工作区。逐文件并排 diff；点「主区域打开」把对比放进中央的「Git 对比」标签页，用整窗宽度查看，之后在侧栏切换文件会实时跟随。
 - **Blame**：文件从仓库文件列表中选择（可搜索），逐行显示提交、作者、时间与代码；点击一行跳到该提交；支持指定修订；长文件分页显示。
 - **并排 diff**：左右行号对齐、增删色块、词级行内高亮；横向滚动条常驻，长行可以左右拖看。
+- **文件树**：变更、提交详情、对比、分支里的文件列表都按目录树分组，单层目录链自动合并，点目录行展开/收起；同名目录在不同分组、提交里各自记住状态。
+- **跟随 Herdr 字体**：界面文字默认读取 Herdr 的界面字体和界面字号（`settings().ui_font_family` / `ui_font_size`），diff、hash、blame 等代码区域读取终端字体（`settings().font_family`），字号随界面字号等比缩放。
 - **主区域对比**：左右两栏各自独立（和 IDEA 一样），中间分隔条可拖动；两栏顶部标出各自对应的版本号；新增/删除文件这种一侧全空的对比只显示有内容的一栏；滚动默认两栏同步，按住 Alt 滚动或拖动滚动条可单独滚动一侧。
 - **完整 Git 操作**：cherry-pick、revert、reset（soft/mixed/hard）、打标签；所有改写历史的操作都有二次确认。
 
@@ -68,6 +70,11 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1
 - 追溯视图：点文件选择框打开仓库文件列表，输入关键词筛选；选中后加载该文件的逐行 blame。
 - 分支视图：点分支展开提交，点提交展开文件，点文件在右侧看并排 diff；点提交不再跳到「历史」视图。
 - 右上角「刷新」重新读取；仓库目录变化会自动刷新（节流 400ms）。
+- 字体和字号默认跟随 Herdr，无需配置。确实需要单独设置时，在布局的 `content.props` 里加覆盖项（`view` 保留）：
+  ```json
+  {"mod":"git-workbench","props":{"view":"changes","font_family":"Inter","font_size":14,"mono_font_family":"JetBrains Mono"}}
+  ```
+  `font_family` 覆盖界面字体，`font_size` 是界面基准字号（所有文字按比例缩放），`mono_font_family` 覆盖 diff、hash、blame 的代码字体；不写就继续读 Herdr。
 - 后台每 5 秒读取一次仓库状态，数据没变时不动界面；文件有变化才更新列表与 diff。
 - 直接执行命令也可以：
   - `herdr-app do layout.select --stack panel-body --child changes`
@@ -98,6 +105,8 @@ git-workbench/
   git.js                  exec 封装；log/status/branches/blame/diff 查询与写操作
   git-parse.js            纯解析函数（node --test 覆盖）
   diff.js                 统一 diff 解析、并排配对、词级 LCS
+  tree.js                 文件列表 → 目录树行（纯函数）
+  text.js                 字体、字号与布局 props 覆盖的解析
   ui.js                   按钮、标签、空状态、输入框外壳
   views/log.js            提交列表 + 提交详情 + 文件 diff
   views/changes.js        工作区分组、暂存/提交
@@ -105,7 +114,8 @@ git-workbench/
   views/compare.js        两点对比、分支下拉、主区域「Git 对比」标签页
   views/stage.js          主区域标签页：左右两栏、同步滚动、可拖分隔条
   views/blame.js          逐行 blame
-  views/diff-view.js      固定行高虚拟列表渲染并排 diff；主区域单栏行渲染
+  views/diff-view.js      行高随字号缩放的虚拟列表并排 diff；主区域单栏行渲染
+  views/file-tree.js      目录行渲染与展开/收起状态
   test/*.test.mjs         node --test
   dev.ps1 / install.ps1 / uninstall.ps1
   install.sh / uninstall.sh  macOS / Linux 安装/卸载
