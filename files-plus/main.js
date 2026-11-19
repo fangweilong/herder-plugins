@@ -1,9 +1,15 @@
-// 文件面板增强版：保留内置 files 的浏览与只读预览，增加「在 VS Code 中打开」。
+// 文件面板增强版：保留内置 files 的浏览与只读预览，增加「在发现的编辑器中打开」。
 // 基于 Herdr 0.1.13 的 mods/files/main.js；Herdr 升级后需要对照上游同步文件树逻辑。
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand, notify } from "herdr";
-import { hostFor, openFolderInVscode, openInVscode } from "./vscode.js";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand, notify, shared, setShared, run, checking } from "herdr";
+import { discoverEditors, hostFor, openInEditor } from "./editor.js";
+import { fallbackEditor, parseDiscoveryState, pickDefault, remoteUnsupported, supportsRemote } from "./editors.js";
+import { installSettingsPage } from "./settings-install.js";
+
+// 选中的默认编辑器按 id 记在 Herdr 的共享存储里；发现结果也缓存，避免每次点击都扫一遍。
+const SELECTED_EDITOR = "files-plus.editor";
+const EDITORS_KEY = "files-plus.editors";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -45,6 +51,23 @@ export default class Files extends View {
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
     this.opening = false; this.gitRoot = null;
+    // 先用 shared 里的缓存；第一次运行（没有缓存）才在后台发现一次。
+    this.editors = [fallbackEditor()];
+    this.activeEditor = this.editors[0];
+    this.editorSig = "";
+    this.picker = false;
+    this.discoveryError = null;
+    this.discovering = false;
+    this.syncShared();
+    if (!parseDiscoveryState(shared(EDITORS_KEY)) && !checking()) this.refreshEditors(cx);
+    if (!checking()) {
+      cx.spawn(async (cx) => {
+        try { await installSettingsPage(cx); }
+        catch (error) {
+          notify({ title: "编辑器设置页加载失败", body: String(error?.message ?? error), level: "warning", timeout: 12000 });
+        }
+      });
+    }
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
     // 可选快捷键：keys.json 的 global 里绑定 "files-plus.open-in-editor" / "files-plus.open-project"。
@@ -87,7 +110,7 @@ export default class Files extends View {
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
-      this.loading = false; this.opening = false; this.gitRoot = null;
+      this.loading = false; this.opening = false; this.gitRoot = null; this.picker = false;
       if (saved?.file) this.show(saved.file, cx);
     }
     if (!cwd || this.loading) return;
@@ -120,6 +143,7 @@ export default class Files extends View {
   }
 
   toggle(path, cx) {
+    this.picker = false;
     if (this.folders.has(path)) {
       for (const folder of [...this.folders]) if (folder === path || folder.startsWith(path + "/")) {
         this.folders.delete(folder);
@@ -141,6 +165,7 @@ export default class Files extends View {
   }
 
   show(path, cx) {
+    this.picker = false;
     this.code?.release(); this.code = null; this.file = path; this.fileError = null;
     if (!path || !cx) return;
     const context = this.context, root = this.root, on = this.on;
@@ -160,18 +185,101 @@ export default class Files extends View {
     });
   }
 
-  /** 共用的打开流程：解析远程 Host，给出成功/失败提示。 */
-  launch(target, open, title, cx) {
-    if (!target || this.opening) return;
-    const on = this.on;
-    this.opening = true;
+  /** 从 shared 读取缓存；没有缓存时返回 null。 */
+  readCache() {
+    return parseDiscoveryState(shared(EDITORS_KEY));
+  }
+
+  /** 文件面板和设置页共用 shared 里的列表与默认项。 */
+  syncShared() {
+    const cached = this.readCache();
+    if (cached) {
+      const editors = cached.editors.length ? cached.editors : [fallbackEditor()];
+      const sig = JSON.stringify(editors.map((editor) => [editor.id, editor.command]));
+      if (sig !== this.editorSig) {
+        this.editorSig = sig;
+        this.editors = editors;
+      }
+      this.discoveryError = cached.error;
+    }
+    this.activeEditor = pickDefault(this.editors, shared(SELECTED_EDITOR));
+  }
+
+  /** 手动刷新发现结果；启动时只在没有缓存的情况下自动跑一次。 */
+  refreshEditors(cx, announce = false) {
+    if (this.discovering) return;
+    this.discovering = true;
+    cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const host = on ? await hostFor(on) : null;
-        await open(target, host);
-        notify({ title, body: target.split(/[\\/]/).pop() || target, level: "success", timeout: 2000 });
+        const editors = await discoverEditors();
+        const error = editors.length ? null : "没有发现编辑器；请检查 HERDR_EDITORS、VISUAL、EDITOR 或 PATH。";
+        this.editors = editors.length ? editors : [fallbackEditor()];
+        this.editorSig = JSON.stringify(this.editors.map((editor) => [editor.id, editor.command]));
+        this.discoveryError = error;
+        setShared(EDITORS_KEY, { editors, at: Date.now(), error });
+        this.keepDefault();
+        if (announce) {
+          notify({
+            title: editors.length ? "编辑器列表已刷新" : "没有发现编辑器",
+            body: editors.length ? editors.map((editor) => editor.name).join("、") : error,
+            level: editors.length ? "success" : "warning",
+            timeout: 3000,
+          });
+        }
       } catch (e) {
-        notify({ title: "无法打开 VS Code", body: e?.message ?? String(e), level: "error" });
+        const message = e?.message ?? String(e);
+        this.discoveryError = message;
+        setShared(EDITORS_KEY, { editors: this.editors, at: Date.now(), error: message });
+        if (announce) notify({ title: "刷新编辑器列表失败", body: message, level: "error" });
+      } finally {
+        this.discovering = false;
+        this.activeEditor = pickDefault(this.editors, shared(SELECTED_EDITOR));
+        cx.notify();
+      }
+    });
+  }
+
+  editorName() {
+    return this.activeEditor?.name ?? "编辑器";
+  }
+
+  /** 默认编辑器已不在新列表里时，把默认改成第一项，避免设置页和面板各选各的。 */
+  keepDefault() {
+    const remembered = shared(SELECTED_EDITOR);
+    if (!this.editors.some((editor) => editor.id === remembered)) setShared(SELECTED_EDITOR, this.editors[0].id);
+  }
+
+  /** 下拉里的一次性选择：打开项目，但不改默认编辑器。 */
+  openWith(editor, cx) {
+    this.picker = false;
+    this.launch(this.gitRoot || this.root, "folder", editor, cx);
+  }
+
+  /** 共用的打开流程：解析远程 Host，给出成功/失败提示。 */
+  launch(target, kind, editor, cx) {
+    if (!target || this.opening) return;
+    if (!editor) {
+      notify({ title: "无法打开编辑器", body: "没有发现可用的编辑器", level: "error" });
+      return;
+    }
+    const on = this.on;
+    this.opening = true;
+    this.picker = false;
+    cx.spawn(async (cx) => {
+      try {
+        // 先判断编辑器是否支持远程，避免报出与它无关的 hosts.json 错误。
+        if (on && !supportsRemote(editor)) throw new Error(remoteUnsupported(editor));
+        const host = on ? await hostFor(on) : null;
+        await openInEditor(editor, target, kind, host);
+        notify({
+          title: `已在 ${editor.name} 中打开${kind === "folder" ? "项目" : ""}`,
+          body: target.split(/[\\/]/).pop() || target,
+          level: "success",
+          timeout: 2000,
+        });
+      } catch (e) {
+        notify({ title: "无法打开编辑器", body: e?.message ?? String(e), level: "error" });
       } finally {
         this.opening = false;
         cx.notify();
@@ -179,19 +287,61 @@ export default class Files extends View {
     });
   }
 
-  /** 在 VS Code 打开文件；path 是相对当前根目录的路径。 */
+  /** 用当前编辑器打开文件；path 是相对当前根目录的路径。 */
   openPath(path, cx) {
     if (!path || !this.root) return;
-    this.launch(`${this.root}/${path}`, openInVscode, "已在 VS Code 中打开", cx);
+    this.launch(`${this.root}/${path}`, "file", this.activeEditor, cx);
   }
 
   openCurrent(cx) {
     if (this.file) this.openPath(this.file, cx);
   }
 
-  /** 在 VS Code 打开当前项目：git 根，否则当前终端目录。 */
+  /** 用当前编辑器打开项目：git 根，否则当前终端目录。 */
   openProject(cx) {
-    this.launch(this.gitRoot || this.root, openFolderInVscode, "已在 VS Code 中打开项目", cx);
+    this.launch(this.gitRoot || this.root, "folder", this.activeEditor, cx);
+  }
+
+  /** 下拉里的编辑器列表；远程项目下不支持的项标灰并给出原因。 */
+  editorRow(editor, t) {
+    const blocked = Boolean(this.on) && !supportsRemote(editor);
+    const active = editor.id === this.activeEditor?.id;
+    return h_flex().id(`files-editor-${editor.id.replace(/[^\w.-]+/g, "-")}`).h(30).px(8).gap(8).flex_none().items_center().rounded(6)
+      .cursor_pointer().hover(s => s.bg(t.hover))
+      .on_click((_e, cx) => {
+        if (blocked) {
+          notify({ title: "无法打开项目", body: remoteUnsupported(editor), level: "error" });
+          return;
+        }
+        this.openWith(editor, cx);
+      })
+      .child(div().w(12).text_size(11).text_color(t.ansi2).child(active ? "✓" : ""))
+      .child(div().flex_1().min_w(0).truncate().child(editor.name))
+      .child(div().text_size(10).text_color(blocked ? t.blocked : t.dim).child(blocked ? "不支持远程" : active ? `默认 · ${editor.source === "PATH" ? "自动发现" : editor.source}` : editor.source === "PATH" ? "自动发现" : editor.source));
+  }
+
+  /** 下拉底部的动作行。 */
+  menuAction(id, label, t, onClick) {
+    return h_flex().id(id).h(28).px(8).gap(8).flex_none().items_center().rounded(6)
+      .cursor_pointer().hover(s => s.bg(t.hover))
+      .on_click((_e, cx) => onClick(cx))
+      .child(div().flex_1().text_size(12).text_color(t.muted).child(label));
+  }
+
+  editorMenu(t) {
+    return v_flex().id("files-editor-menu").flex_none().max_h(300).min_h(0).overflow_y_scrollbar().px(6).py(4).gap(2).border_b(1).border_color(t.border)
+      .child(div().px(8).py(2).text_size(11).text_color(t.dim).child(this.on ? "这次用哪个 app 打开远程项目？" : "这次用哪个 app 打开项目？"))
+      .children(this.editors.map((editor) => this.editorRow(editor, t)))
+      .child(div().my(2).h(1).flex_none().bg(t.border))
+      .child(this.menuAction("files-editor-refresh", this.discovering ? "正在刷新编辑器列表…" : "刷新编辑器列表", t, (cx) => {
+        this.picker = false;
+        this.refreshEditors(cx, true);
+      }))
+      .child(this.menuAction("files-editor-settings", "设置默认编辑器…", t, (cx) => {
+        this.picker = false;
+        run("app.settings", { section: "editors" });
+        cx.notify();
+      }));
   }
 
   rows(prefix, depth, out, t) {
@@ -223,14 +373,19 @@ export default class Files extends View {
 
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
+    this.syncShared();
     const t = theme();
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("文件"))
-        .when(Boolean(this.root), el => el.child(headerButton("files-open-project", "项目", t, (cx) => this.openProject(cx), "在 VS Code 中打开当前项目")))
-        .when(Boolean(this.file), el => el.child(headerButton("files-open-vscode", "VS Code", t, (cx) => this.openCurrent(cx), "在 VS Code 中打开当前文件")))
+        .when(Boolean(this.root), el => el
+          .child(headerButton("files-open-project", "项目", t, (cx) => this.openProject(cx), `在 ${this.editorName()} 中打开当前项目（默认编辑器）`))
+          .child(headerButton("files-open-project-menu", "▾", t, (cx) => { this.picker = !this.picker; cx.notify(); }, "选择这次用哪个 app 打开项目（不改变默认）")))
+        .when(Boolean(this.file), el => el.child(headerButton("files-open-editor", this.editorName(), t, (cx) => this.openCurrent(cx), `在 ${this.editorName()} 中打开当前文件`)))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
+      .when(Boolean(this.discoveryError), el => el.child(div().id("files-discovery-error").px(10).py(4).flex_none().text_size(10).text_color(t.blocked).child(`编辑器发现：${this.discoveryError}`)))
+      .when(this.picker, el => el.child(this.editorMenu(t)))
       .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "正在加载文件…" : this.root ? "没有文件" : "没有文件夹"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("文件列表限制为每文件夹 500 项、共 5,000 项")))))
