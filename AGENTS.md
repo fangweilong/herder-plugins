@@ -14,10 +14,16 @@
   失败时报告原始输出，不要静默降级或绕过。
 - 安装会删除并重建 `mods/files-plus/`，卸载会删除它；安装时会保留用户的 `hosts.json`。
 
-## files-plus（在 VS Code 中打开文件/项目）
+## files-plus（在编辑器中打开文件/项目）
 
-mod 运行时支持 Windows、macOS、Linux；区别只在安装器。用户要求安装时直接执行对应平台的
-脚本，不需要再手写安装步骤。
+编辑器自动发现，不需要配置文件：`HERDR_EDITORS`、`VISUAL`、`EDITOR` 环境变量，加上 `PATH`
+里的 `code` / `zed` / `idea` / `openidea` 等启动器；Windows 还会读取注册表里最新的用户/机器
+环境变量和 PATH、扫描开始菜单快捷方式，并看卸载项的 `DisplayIcon` 找没写 PATH 的应用。
+发现和启动共用同一套 PATH 合并逻辑，所以 Herdr 启动后才装进 PATH 的命令也能打开。
+发现结果缓存在共享存储里，启动只读缓存；点 **项目** 直接用默认编辑器打开，右侧 **▾** 单次
+选择 app。默认编辑器在 **设置 → 编辑器** 里选，那里的 **刷新** 才重新扫描。mod 运行时支持
+Windows、macOS、Linux；区别只在安装器。用户要求安装时直接执行对应平台的脚本，不需要再手写
+安装步骤。
 
 ### Windows
 
@@ -65,7 +71,7 @@ $herdr = (Get-Command herdr-app -ErrorAction SilentlyContinue).Source
 if (-not $herdr) { $herdr = Join-Path $env:LOCALAPPDATA "Programs\herdr-app\herdr-app.exe" }
 & $herdr check (Join-Path $app "mods\files-plus")
 & $herdr status
-node --test files-plus/test/uri.test.mjs files-plus/test/launch.test.mjs
+node --test files-plus/test/uri.test.mjs files-plus/test/launch.test.mjs files-plus/test/editors.test.mjs files-plus/test/settings.test.mjs
 ```
 
 macOS / Linux：
@@ -74,11 +80,14 @@ macOS / Linux：
 app_home=${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}
 herdr-app check "$app_home/mods/files-plus"
 herdr-app status
-node --test files-plus/test/uri.test.mjs files-plus/test/launch.test.mjs
+node --test files-plus/test/uri.test.mjs files-plus/test/launch.test.mjs files-plus/test/editors.test.mjs files-plus/test/settings.test.mjs
 ```
 
 `check` 应输出 `check passed`；`status` 的 `errors` 应为空。布局热重载后，文件面板标题栏应出现
-**项目** 按钮，预览文件后出现 **VS Code** 按钮。
+**项目** 和右侧 **▾**；点 **项目** 应直接用默认编辑器打开，点 **▾** 应列出发现的编辑器，
+选择后只用它打开这一次。预览文件后出现默认编辑器名称的按钮。打开 **设置** 应看到「编辑器」
+页，可点选默认编辑器并刷新。Herdr 启动时会还原 `frame/`，设置页由文件面板初始化时重新注入；
+若锚点缺失，应弹出「编辑器设置页加载失败」，且 `status` 的 `errors` 仍为空。
 
 ### 卸载
 
@@ -101,6 +110,14 @@ sh files-plus/uninstall.sh
 
 - **没有个人布局引用 `files`**：脚本会提示。不要改内置布局；让用户在自定义布局或 `zh.json`
   里把 `content.mod` 改成 `"files-plus"`，或先切换到个人布局。
+- **按钮打不开编辑器**：列表里是已缓存或刚发现的编辑器。Windows 上点 **▾ → 刷新编辑器列表**
+  或 **设置 → 编辑器 → 刷新**，会重新读取注册表里最新的环境变量/PATH、开始菜单和卸载项；
+  macOS / Linux 在 Herdr 启动后新增的 PATH 需要重启 Herdr 才能看到，或用 `HERDR_EDITORS`
+  指向启动器的完整路径。Zed / IDEA / OpenIDEA 需要各自的命令行启动器或应用可执行文件。
+  命令不存在时面板会弹出带原始信息的错误通知，不要改成静默回退。
+- **设置里没有「编辑器」页**：Herdr 启动时会还原 `frame/`，设置页由文件面板初始化时注入。
+  确认 `zh.json` 等个人布局确实引用 `files-plus`，并看有没有「编辑器设置页加载失败」通知；
+  失败时报告 `frame/settings/main.js` 的实际结构，不要手写补丁绕过。
 - **重装 zh-cn 后按钮消失**：zh-cn 会覆盖 `zh.json`，把面板指回 `files`。重跑 files-plus 的
   安装脚本即可。
 - **`herdr-app` 不在 PATH**：Windows 默认在

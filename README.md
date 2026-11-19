@@ -6,7 +6,7 @@
 | 插件 | 作用 | 文档 |
 | --- | --- | --- |
 | **zh-cn** | 简体中文界面，附带「快捷键」设置页与 solarized 主题 | [zh-cn/README.md](zh-cn/README.md) |
-| **files-plus** | 文件面板增加「在 VS Code 中打开」（项目、当前文件、文件行） | [files-plus/README.md](files-plus/README.md) |
+| **files-plus** | 文件面板增加「在编辑器中打开」，自动发现 VS Code / Zed / IDEA / OpenIDEA 等；设置里选默认，项目右侧下拉单次选择 | [files-plus/README.md](files-plus/README.md) |
 | **git-workbench** | 提交历史、变更、分支、对比与 blame，取代原生「更改」面板 | [git-workbench/README.md](git-workbench/README.md) |
 | **quick-commands** | `Ctrl+Shift+R` 命令模板面板，把命令发送到当前终端 | [quick-commands/README.md](quick-commands/README.md) |
 
