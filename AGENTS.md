@@ -128,11 +128,11 @@ sh files-plus/uninstall.sh
 
 ## 其他插件
 
-`git-workbench`、`quick-commands` 都有 Windows PowerShell 和 POSIX shell
+`git-workbench`、`quick-commands`、`color-themes` 都有 Windows PowerShell 和 POSIX shell
 安装器。Windows 没有 `pwsh` 时，把 `pwsh -NoProfile -File` 换成
-`powershell -ExecutionPolicy Bypass -File`。POSIX 脚本需要 `python3`（或可用的 `python`）来安全
-改写 `keys.json` / 布局；`herdr-app` 优先从 `PATH` 或 `HERDR_APP_BIN` 查找，macOS 还会尝试
-`/Applications/Herdr.app/Contents/MacOS/herdr-app`。
+`powershell -ExecutionPolicy Bypass -File`。`git-workbench` 与 `quick-commands` 的 POSIX 脚本
+需要 `python3`（或可用的 `python`）来安全改写 `keys.json` / 布局；`herdr-app` 优先从 `PATH` 或
+`HERDR_APP_BIN` 查找，macOS 还会尝试 `/Applications/Herdr.app/Contents/MacOS/herdr-app`。
 
 ### git-workbench
 
@@ -183,6 +183,34 @@ powershell -ExecutionPolicy Bypass -File quick-commands/uninstall.ps1
 
 ```sh
 sh quick-commands/uninstall.sh          # 加 --purge 删除命令模板
+```
+
+### color-themes
+
+Windows：
+
+```powershell
+pwsh -NoProfile -File color-themes/install.ps1
+```
+
+macOS / Linux：
+
+```sh
+sh color-themes/install.sh
+```
+
+把 `themes/idea-new-ui.json` 与 `themes/opencode-black-gold.json` 复制到 `<app home>/themes/`，
+不改布局、`keys.json` 或 `shared.json`。安装后在 **设置 → 主题 → 深色** 选择 **idea new ui**
+或 **opencode black gold**，或运行 `herdr-app do app.theme --name idea-new-ui` /
+`--name opencode-black-gold`；外观模式为「跟随系统」且系统是浅色时，需先切到「深色」。
+卸载删除这两个主题文件：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File color-themes/uninstall.ps1
+```
+
+```sh
+sh color-themes/uninstall.sh
 ```
 
 `zh-cn/` 已有 `install.ps1` / `install.sh` / `uninstall.ps1` / `uninstall.sh`，见其 README。

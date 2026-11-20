@@ -13,3 +13,10 @@ files-plus 的文件树与只读预览逻辑来自 herdrdev/herdr-app 的 defaul
 同样依 Apache License 2.0 授权；其 uri.js 的 VS Code URI 处理取自
 CacaoRick/herdr-open-vscode，依 MIT 授权：
 https://github.com/CacaoRick/herdr-open-vscode
+
+color-themes 的配色数值取自两个上游项目的主题资源：
+- JetBrains/intellij-community 的 expUI_dark.theme.json、expUI_darkScheme.xml、
+  DefaultColorSchemesManager.xml，依 Apache License 2.0 授权：
+  https://github.com/JetBrains/intellij-community
+- OpenCode v2.3.2 的 packages/tui/src/theme/assets/opencode.json，依 MIT 授权：
+  https://github.com/sst/opencode
