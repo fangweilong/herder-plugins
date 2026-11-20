@@ -5,10 +5,11 @@
 
 | 插件 | 作用 | 文档 |
 | --- | --- | --- |
-| **zh-cn** | 简体中文界面，附带「快捷键」设置页与 solarized 主题 | [zh-cn/README.md](zh-cn/README.md) |
+| **zh-cn** | 简体中文界面，设置里可切换中英文，附带「快捷键」设置页与 solarized 主题 | [zh-cn/README.md](zh-cn/README.md) |
 | **files-plus** | 文件面板增加「在编辑器中打开」，自动发现 VS Code / Zed / IDEA / OpenIDEA 等；设置里选默认，项目右侧下拉单次选择 | [files-plus/README.md](files-plus/README.md) |
 | **git-workbench** | 提交历史、变更、分支、对比与 blame，取代原生「更改」面板 | [git-workbench/README.md](git-workbench/README.md) |
 | **quick-commands** | `Ctrl+Shift+R` 命令模板面板，把命令发送到当前终端 | [quick-commands/README.md](quick-commands/README.md) |
+| **color-themes** | IntelliJ IDEA New UI 与 OpenCode 黑金配色，装好后在设置里切换 | [color-themes/README.md](color-themes/README.md) |
 
 ## 环境要求
 
@@ -29,6 +30,7 @@ pwsh -NoProfile -File zh-cn/install.ps1
 pwsh -NoProfile -File files-plus/install.ps1
 pwsh -NoProfile -File git-workbench/install.ps1
 pwsh -NoProfile -File quick-commands/install.ps1
+pwsh -NoProfile -File color-themes/install.ps1
 ```
 
 没有 `pwsh` 时，把 `pwsh -NoProfile -File` 换成 `powershell -ExecutionPolicy Bypass -File`。
@@ -40,6 +42,7 @@ sh zh-cn/install.sh
 sh files-plus/install.sh
 sh git-workbench/install.sh
 sh quick-commands/install.sh
+sh color-themes/install.sh
 ```
 
 安装完成后 Herdr 会热重载布局，一般不需要重启。每个脚本具体改了什么，见对应插件的 README。

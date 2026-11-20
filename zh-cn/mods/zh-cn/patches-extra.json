@@ -1,0 +1,59 @@
+{
+ "note": "基准版本之后新增的界面文字。重新生成 patches.json 不会覆盖这里；上游版本更新后把已并入基准的条目删掉。",
+ "files": {
+  "frame/settings/main.js": [
+   {
+    "old": "settings.json has errors: fix it first",
+    "new": "settings.json 有错误：请先修复"
+   },
+   {
+    "old": "Cannot read settings.json",
+    "new": "无法读取 settings.json"
+   },
+   {
+    "old": "Not saved to settings.json",
+    "new": "未保存到 settings.json"
+   },
+   {
+    "old": "terminals: \"Terminals\"",
+    "new": "terminals: \"终端\""
+   },
+   {
+    "old": "Terminal font weight",
+    "new": "终端字体粗细"
+   },
+   {
+    "old": "own(\"font_weight\", s.font_weight, 500) ? \"This layout sets its own; yours shows in the others.\" : \"Bold text stays at 700.\"",
+    "new": "own(\"font_weight\", s.font_weight, 500) ? \"此布局有自己的设置；你的设置会用于其他布局。\" : \"粗体文字保持 700。\""
+   },
+   {
+    "old": "Terminal line height",
+    "new": "终端行高"
+   },
+   {
+    "old": "Terminal cell width",
+    "new": "终端列宽"
+   },
+   {
+    "old": "Terminal scroll speed",
+    "new": "终端滚动速度"
+   },
+   {
+    "old": "own(key, s[key], 1) ? \"This layout sets its own; yours shows in the others.\" : null",
+    "new": "own(key, s[key], 1) ? \"此布局有自己的设置；你的设置会用于其他布局。\" : null"
+   },
+   {
+    "old": "Agents stop when you disconnect. Click for the fix.",
+    "new": "断开连接后智能体将停止。点击修复。"
+   },
+   {
+    "old": "needs a login: run",
+    "new": "需要登录：运行"
+   },
+   {
+    "old": "this.copiedLogin === command ? \"Copied\" : \"Copy\"",
+    "new": "this.copiedLogin === command ? \"已复制\" : \"复制\""
+   }
+  ]
+ }
+}

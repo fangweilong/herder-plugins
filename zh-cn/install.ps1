@@ -11,9 +11,13 @@ if (-not (Test-Path (Join-Path $home_ "installed.json"))) {
 }
 
 $target = Join-Path $home_ "mods/zh-cn"
+# 重装时保留用户选的语言（language.json），与 files-plus 保留 hosts.json 同理。
+$languageFile = Join-Path $target "language.json"
+$languageBytes = if (Test-Path $languageFile) { [IO.File]::ReadAllBytes($languageFile) } else { $null }
 if (Test-Path $target) { Remove-Item -Recurse -Force $target }
 New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
 Copy-Item -Recurse (Join-Path $here "mods/zh-cn") $target
+if ($null -ne $languageBytes) { [IO.File]::WriteAllBytes($languageFile, $languageBytes) }
 
 # 快捷键页：设置里的新标签页，由独立的 shortcuts mod 注入 frame/settings。
 $shortcuts = Join-Path $home_ "mods/shortcuts"

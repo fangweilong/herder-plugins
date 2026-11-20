@@ -17,6 +17,8 @@
 - 设置新增「快捷键」页：按动作合并列出 `keys.json` 的全部绑定，点击按键即可改绑、删除或
   给同一动作追加一个键（由独立的 `shortcuts` mod 提供；保存后 Herdr 实时重载，无需重启）
 - 中文布局：`zh`（主界面）、`zh-terminals`、`zh-win98`
+- 设置「外观」页顶部的「语言 / Language」：在中文与 English 之间切换。选择保存在
+  `mods/zh-cn/language.json`，重启 Herdr 后生效；英文模式下该选项仍会保留，便于切回中文
 - 配色：附带 `solarized` 深色主题，由 `zh` 布局固定使用（不跟随系统明暗）
 
 未覆盖（这些文字由 Rust 直接绘制，mod 无法改写）：部分错误提示与更新横幅、macOS 原生菜单、
@@ -40,7 +42,8 @@ cd zh-cn
 
 安装脚本会：
 
-1. 把 `mods/zh-cn` 与 `mods/shortcuts` 复制到 `~/.config/herdr-app/mods/`；
+1. 把 `mods/zh-cn` 与 `mods/shortcuts` 复制到 `~/.config/herdr-app/mods/`（重装时保留
+   `mods/zh-cn/language.json`，语言选择不丢）；
 2. 复制三个中文布局到 `~/.config/herdr-app/layouts/`；
 3. 把 `themes/solarized.json` 复制到 `~/.config/herdr-app/themes/`；
 4. 如果 Herdr 正在运行，切换到 `zh` 布局。
@@ -85,6 +88,12 @@ Herdr 每次启动都会：
 `frame/settings/shortcuts.js` 与 `keys-edit.js`，图标是 `keyboard.svg`。用目录锁串行化
 热重载时的多个实例，避免两个写入者把文件写坏。
 
+语言选项由 `zh-cn` 在每次启动时注入设置页。选择写在 `mods/zh-cn/language.json`，而不是
+`settings.json`（后者的未知字段可能在 Herdr 回写时丢失）。文件内容为 `{"language":"en"}` 时
+跳过全部翻译，`shortcuts` 也不再注入「快捷键」页；语言选项本身仍会注入，所以可以在英文界面里
+切回中文，重启后恢复。`patches-extra.json` 存放基准版本之后新增文字的手工规则，
+重新生成 `patches.json` 不会覆盖它。
+
 改键时只改 `keys.json`：读文件、删旧 chord、写新 chord，带快照校验地原子写回（文件被别人
 同时改过就重读重试）。`keys.json` 是完整按键表而不是补丁，所以删掉一条就真正解绑；Herdr
 监听该文件，保存后立即生效。应用保留的 `ctrl-alt-shift-escape` 只读，页面不会写回它。
@@ -96,6 +105,8 @@ Herdr 每次启动都会：
 
 - 只有中文布局会加载补丁：切到 `main` / `win98` / `terminals` 后，本次运行仍是中文，但下次启动
   不会应用语言包，`shortcuts` 注入的「快捷键」页也会随 `frame/` 还原而消失。用 `zh*` 布局即可。
+- 「语言 / Language」选项同样只在 `zh*` 布局运行时注入；切到其他布局后，本次运行仍可用，
+  重启后随 `frame/` 还原消失。
 - 上游改写过的句子会暂时显示英文；重新生成规则即可补齐（见下文）。
 
 ## 文件
@@ -108,14 +119,21 @@ zh-cn/
   layouts/zh-win98.json
   themes/solarized.json    深色主题（由 macOS Terminal 的 111.terminal 转换）
   mods/zh-cn/
-    main.js                补丁：应用规则、维护 installed.json 指纹
+    main.js                启动入口：读取语言、调用 apply.js、报告失败
+    apply.js               翻译/跳过翻译与注入设置页的文件操作（有测试）
     patches.json           规则表（英文 → 中文）
+    patches-extra.json     基准版本之后新增文字的手工规则（生成器不覆盖）
+    inject.js              语言选项注入与 language.json 读取
+    rules.js               规则匹配（纯函数，有测试）
   mods/shortcuts/
     main.js                启动后把「快捷键」页注入 frame/settings
     shortcuts.js           快捷键页本体（keys() 分组、美化按键、就地编辑）
     keys-edit.js           chord 规范化与 keys.json 绑定改写（纯函数，有测试）
     keyboard.svg           设置导航图标
   test/keys-edit.test.mjs  改键逻辑测试（node --test）
+  test/inject.test.mjs     语言选项注入测试
+  test/patches-extra.test.mjs  补充规则测试
+  test/apply.test.mjs      中文/英文两种模式的完整文件回放测试
   orig/                    0.1.12 官方英文原文（生成规则用，不随包安装）
   reference/               对应的中文全文（维护用，不随包安装）
   tools/make-patches.py    从 orig/ 与 reference/ 生成 patches.json
@@ -127,6 +145,9 @@ zh-cn/
 2. 把新版文件复制到 `orig/`（保留路径），在 `reference/` 里同步翻译差异；
 3. 运行 `python tools/make-patches.py`（脚本会回放校验：规则必须逐字还原 `reference/`）；
 4. 对 `reference/` 下每个 mod/frame 运行 `herdr-app check`，再安装。
+
+基准版本尚未升级时，新版本新增的少量文字可以先写进 `patches-extra.json`；等 `orig/`、
+`reference/` 升到该版本并重新生成 `patches.json` 后，把已经并入的条目从补充文件里删掉。
 
 ## 许可
 

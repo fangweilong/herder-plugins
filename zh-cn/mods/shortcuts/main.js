@@ -142,6 +142,13 @@ async function release(home) {
 
 async function install(cx) {
   const home = appHome();
+  // 语言切到 English 时不注入：语言设置项由 zh-cn 注入，切回中文后重启即可恢复本页。
+  let person = {};
+  try {
+    person = JSON.parse(await fsp.readFile(`${home}/mods/zh-cn/language.json`, "utf8"));
+  } catch {}
+  if (person?.language === "en") return;
+
   const mod = `${home}/mods/shortcuts`;
   const dir = `${home}/frame/settings`;
   await fsp.mkdir(dir, { recursive: true });
